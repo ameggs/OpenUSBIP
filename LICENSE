@@ -1,0 +1,53 @@
+GNU GENERAL PUBLIC LICENSE
+Version 3, 29 June 2007
+
+OpenUSBIP - Open Source USB over IP
+Copyright (C) 2025 OpenUSBIP Contributors
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+================================================================================
+
+This project uses and is compatible with:
+
+1. Linux Kernel USB/IP (GPL-2.0)
+   https://www.kernel.org/doc/html/latest/usb/usbip_protocol.html
+
+2. usbipd-win by @dorssel (GPL-3.0)
+   https://github.com/dorssel/usbipd-win
+
+3. usbip-win2 by @vadimgrn (BSD-2-Clause)
+   https://github.com/vadimgrn/usbip-win2
+
+4. PySide6 (LGPL-3.0)
+   https://www.qt.io/qt-for-python
+
+5. python-zeroconf (LGPL-2.1)
+   https://github.com/python-zeroconf/python-zeroconf
+
+================================================================================
+
+DISCLAIMER:
+
+This is a personal project created for educational and personal use only.
+It is not affiliated with, endorsed by, or connected to VirtualHere or any
+commercial USB/IP solutions.
+
+This software is provided "as is" without warranty of any kind. Use at your
+own risk.
+
+================================================================================
+
+For the full GPL-3.0 license text, see:
+https://www.gnu.org/licenses/gpl-3.0.txt
