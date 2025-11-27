@@ -41,14 +41,41 @@ echo ""
 read -p "Press ENTER when you've created the repository..."
 
 echo ""
-echo "📋 Step 2: Add Gitea as remote"
+echo "📋 Step 2: Choose connection method"
 echo "---------------------------------------"
+echo "How do you want to connect to Gitea?"
+echo "1) SSH (recommended - no password needed)"
+echo "2) HTTPS (requires username/password)"
+echo ""
+read -p "Enter choice [1 or 2]: " CONNECTION_METHOD
 
 # Remove existing remote if it exists
 git remote remove origin 2>/dev/null
 
-# Add new remote
-REMOTE_URL="$GITEA_URL/$GITEA_USER/$REPO_NAME.git"
+# Set remote URL based on choice
+if [ "$CONNECTION_METHOD" = "1" ]; then
+    # Test SSH connection first
+    echo ""
+    echo "Testing SSH connection to Gitea..."
+    if ssh -T git@192.168.0.59 2>&1 | grep -q "successfully authenticated"; then
+        echo "✅ SSH connection successful!"
+        REMOTE_URL="git@192.168.0.59:$GITEA_USER/$REPO_NAME.git"
+    else
+        echo "❌ SSH connection failed!"
+        echo ""
+        echo "Your SSH key needs to be added to Gitea."
+        echo "See ADD_SSH_KEY_TO_GITEA.md for instructions."
+        echo ""
+        echo "Falling back to HTTPS..."
+        REMOTE_URL="$GITEA_URL/$GITEA_USER/$REPO_NAME.git"
+    fi
+else
+    REMOTE_URL="$GITEA_URL/$GITEA_USER/$REPO_NAME.git"
+fi
+
+echo ""
+echo "📋 Step 3: Add Gitea as remote"
+echo "---------------------------------------"
 echo "Adding remote: $REMOTE_URL"
 git remote add origin "$REMOTE_URL"
 
@@ -60,7 +87,7 @@ else
 fi
 
 echo ""
-echo "📋 Step 3: Push to Gitea"
+echo "📋 Step 4: Push to Gitea"
 echo "---------------------------------------"
 echo "Pushing to: $REMOTE_URL"
 echo ""
