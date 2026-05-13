@@ -313,7 +313,7 @@ class MainWindow(QMainWindow):
 <li>Free and open source (GPL-3.0)</li>
 </ul>
 <br>
-<p><b>Project:</b> <a href="https://github.com/yourusername/openusbip">GitHub</a></p>
+<p><b>Project:</b> <a href="https://github.com/ameggs/OpenUSBIP">GitHub</a></p>
 <p><b>License:</b> GPL-3.0</p>
         """
         
