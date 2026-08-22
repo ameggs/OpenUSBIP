@@ -22,6 +22,9 @@ from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# The USB/IP IANA-registered default port.
+DEFAULT_USBIP_PORT = 3240
+
 
 class DeviceState(Enum):
     """USB device state"""
@@ -73,6 +76,16 @@ class USBIPWrapper:
         else:
             return find_command("usbipd")
     
+    def _base_cmd(self, port: int = DEFAULT_USBIP_PORT) -> List[str]:
+        """
+        Build the usbip invocation prefix, including the global --tcp-port
+        option when a non-default port is requested.
+        """
+        cmd = [self._usbip_cmd]  # type: ignore[list-item]
+        if port and port != DEFAULT_USBIP_PORT:
+            cmd += ["--tcp-port", str(port)]
+        return cmd
+
     def is_available(self) -> bool:
         """Check if USB/IP tools are available"""
         return self._usbip_cmd is not None
@@ -81,14 +94,18 @@ class USBIPWrapper:
         """
         List USB devices on local machine (server mode)
         """
-        if not self._usbipd_cmd:
-            logger.error("usbipd command not found")
-            return []
-        
         if self.platform == Platform.WINDOWS:
+            if not self._usbipd_cmd:
+                logger.error("usbipd command not found")
+                return []
             return self._list_local_devices_windows()
-        else:
-            return self._list_local_devices_linux()
+
+        # Linux lists local devices with `usbip list -l`; usbipd is the daemon
+        # and is not required just to enumerate.
+        if not self._usbip_cmd:
+            logger.error("usbip command not found")
+            return []
+        return self._list_local_devices_linux()
     
     def _list_local_devices_windows(self) -> List[USBDevice]:
         """List local devices on Windows using usbipd"""
@@ -183,16 +200,24 @@ class USBIPWrapper:
                     state=DeviceState.AVAILABLE
                 )
             
-            # Match description line
-            elif current_device and ':' in line:
-                current_device.description = line.strip()
+            # The line after a busid carries the human-readable name. Only take
+            # the first one, and strip the trailing "(vid:pid)" so it is not
+            # repeated by __str__, which appends the ids itself.
+            elif (
+                current_device
+                and ':' in line
+                and current_device.description == "Unknown Device"
+            ):
+                current_device.description = re.sub(
+                    r'\s*\([0-9a-f]{4}:[0-9a-f]{4}\)\s*$', '', line, flags=re.IGNORECASE
+                ).strip()
         
         if current_device:
             devices.append(current_device)
         
         return devices
     
-    def list_remote_devices(self, host: str, port: int = 3240) -> List[USBDevice]:
+    def list_remote_devices(self, host: str, port: int = DEFAULT_USBIP_PORT) -> List[USBDevice]:
         """
         List USB devices on remote server
         
@@ -205,9 +230,10 @@ class USBIPWrapper:
             return []
         
         devices = []
-        
-        # Run: usbip list -r <host>
-        cmd = [self._usbip_cmd, "list", "-r", host]  # type: ignore
+
+        # Run: usbip [--tcp-port <port>] list -r <host>
+        # --tcp-port is a global option and must precede the subcommand.
+        cmd = self._base_cmd(port) + ["list", "-r", host]
         returncode, stdout, stderr = run_command(cmd, timeout=15)
         
         if returncode != 0:
@@ -249,7 +275,7 @@ class USBIPWrapper:
         logger.info(f"Found {len(devices)} devices on {host}")
         return devices
     
-    def attach_device(self, host: str, busid: str, port: int = 3240) -> Tuple[bool, str]:
+    def attach_device(self, host: str, busid: str, port: int = DEFAULT_USBIP_PORT) -> Tuple[bool, str]:
         """
         Attach remote USB device
         
@@ -264,8 +290,8 @@ class USBIPWrapper:
         if not self._usbip_cmd:
             return False, "usbip command not found"
         
-        # Run: usbip attach -r <host> -b <busid>
-        cmd = [self._usbip_cmd, "attach", "-r", host, "-b", busid]  # type: ignore
+        # Run: usbip [--tcp-port <port>] attach -r <host> -b <busid>
+        cmd = self._base_cmd(port) + ["attach", "-r", host, "-b", busid]
         returncode, stdout, stderr = run_command(cmd, timeout=10, require_admin=True)
         
         if returncode == 0:
@@ -290,7 +316,7 @@ class USBIPWrapper:
             return False, "usbip command not found"
         
         # Run: usbip detach -p <port>
-        cmd = [self._usbip_cmd, "detach", "-p", port_num]  # type: ignore
+        cmd = [self._usbip_cmd, "detach", "-p", port_num]  # local; no --tcp-port
         returncode, stdout, stderr = run_command(cmd, timeout=10, require_admin=True)
         
         if returncode == 0:

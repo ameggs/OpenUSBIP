@@ -28,6 +28,7 @@ from src.utils.platform_utils import get_platform, check_usbip_installed, is_adm
 from src.gui.server_widget import ServerListWidget
 from src.gui.device_widget import DeviceListWidget
 from src.gui.system_tray import SystemTray
+from src.gui.workers import run_async, wait_for_workers
 
 logger = setup_logger(__name__)
 
@@ -122,6 +123,10 @@ class MainWindow(QMainWindow):
         
         # Device list (right side)
         self.device_widget = DeviceListWidget(self.usbip)
+        # Reuse the widget's fetches for the tray rather than issuing a second
+        # identical usbip call for every refresh.
+        self.device_widget.devices_loaded.connect(self._on_devices_loaded)
+        self.device_widget.attached_loaded.connect(self._on_attached_loaded)
         splitter.addWidget(self.device_widget)
         
         # Create menu bar AFTER widgets are created
@@ -245,14 +250,9 @@ class MainWindow(QMainWindow):
         logger.info(f"Server selected: {server.display_name}")
         self.update_status(f"Connected to: {server.display_name}")
         
-        # Load devices from this server
+        # Load devices from this server. The tray is updated from the
+        # devices_loaded signal, so no second lookup is needed here.
         self.device_widget.load_devices(server)
-        
-        # Update tray with devices from this server
-        if self.tray:
-            devices = self.usbip.list_remote_devices(server.ip_address, server.port)
-            if devices:
-                self.tray.update_devices(server.ip_address, devices)
     
     def refresh_data(self):
         """Refresh all data"""
@@ -265,13 +265,23 @@ class MainWindow(QMainWindow):
         if self.current_server:
             self.device_widget.load_devices(self.current_server)
         
-        # Update tray menus
+        # Refresh the attached list; the tray follows via attached_loaded.
+        self.device_widget.refresh_attached_devices()
+
         if self.tray:
             self.tray.update_servers(self.discovery.get_servers())
-            attached = self.usbip.list_attached_devices()
-            self.tray.update_attached_devices(attached)
-        
+
         self.update_status("Refreshed")
+
+    def _on_devices_loaded(self, server_ip: str, devices: list):
+        """Mirror a completed remote-device fetch into the tray menu."""
+        if self.tray and devices:
+            self.tray.update_devices(server_ip, devices)
+
+    def _on_attached_loaded(self, attached: list):
+        """Mirror a completed attached-device fetch into the tray menu."""
+        if self.tray:
+            self.tray.update_attached_devices(attached)
     
     def toggle_discovery(self, enabled: bool):
         """Toggle auto-discovery on/off"""
@@ -388,6 +398,10 @@ class MainWindow(QMainWindow):
         if self.tray:
             self.tray.hide()
 
+        # Let in-flight background work finish before Qt tears down, otherwise
+        # pool threads emit into destroyed objects.
+        wait_for_workers()
+
         self.close()
         QApplication.quit()
     
@@ -408,9 +422,19 @@ class MainWindow(QMainWindow):
                 self.tray.notify_error("Attach Failed", f"Server {server_ip} not found")
             return
         
-        # Attach the device
-        success, message = self.usbip.attach_device(server_ip, busid)
-        
+        # Attach in the background: this shells out to usbip and can block.
+        run_async(
+            self.usbip.attach_device,
+            server_ip,
+            busid,
+            server.port,
+            on_result=lambda outcome, b=busid, srv=server: self._on_tray_attach(outcome, b, srv),
+            on_error=lambda msg, b=busid, srv=server: self._on_tray_attach((False, msg), b, srv),
+        )
+
+    def _on_tray_attach(self, outcome, busid: str, server: USBIPServer):
+        """Report the result of a tray-initiated attach."""
+        success, message = outcome
         if success:
             logger.info(f"Device {busid} attached successfully")
             if self.tray:
@@ -425,8 +449,16 @@ class MainWindow(QMainWindow):
         """Detach a device from the system tray menu"""
         logger.info(f"Detaching device on port {port} via tray")
         
-        success, message = self.usbip.detach_device(port)
-        
+        run_async(
+            self.usbip.detach_device,
+            port,
+            on_result=lambda outcome, pt=port: self._on_tray_detach(outcome, pt),
+            on_error=lambda msg, pt=port: self._on_tray_detach((False, msg), pt),
+        )
+
+    def _on_tray_detach(self, outcome, port: str):
+        """Report the result of a tray-initiated detach."""
+        success, message = outcome
         if success:
             logger.info(f"Device on port {port} detached successfully")
             if self.tray:

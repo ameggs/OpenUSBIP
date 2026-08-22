@@ -18,11 +18,12 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QLabel, QMessageBox,
     QGroupBox, QHeaderView, QAbstractItemView
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 
 from src.core.usbip_wrapper import USBIPWrapper, USBDevice, DeviceState
 from src.core.server_discovery import USBIPServer
+from src.gui.workers import run_async
 from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -30,15 +31,25 @@ logger = setup_logger(__name__)
 
 class DeviceListWidget(QWidget):
     """Widget for displaying and managing USB devices"""
-    
+
+    # Emitted whenever a remote device list arrives, so MainWindow can update
+    # the tray without issuing a second identical usbip call.
+    devices_loaded = Signal(str, list)  # server_ip, devices
+    attached_loaded = Signal(list)
+
     def __init__(self, usbip: USBIPWrapper):
         super().__init__()
-        
+
         self.usbip = usbip
         self.current_server: Optional[USBIPServer] = None
         self.devices: List[USBDevice] = []
         self.attached_devices = []
-        
+
+        # Guards against the 5s refresh timer stacking up requests when a
+        # server is slow: a call can outlive the interval that triggered it.
+        self._loading_devices = False
+        self._loading_attached = False
+
         self.init_ui()
     
     def init_ui(self):
@@ -110,44 +121,77 @@ class DeviceListWidget(QWidget):
         self.refresh_attached_devices()
     
     def load_devices(self, server: USBIPServer):
-        """Load devices from a server"""
+        """
+        Load devices from a server.
+
+        Runs off the GUI thread: `usbip list -r` against an unreachable host
+        takes the full command timeout to fail.
+        """
         self.current_server = server
-        self.available_header.setText(f"Devices on: {server.display_name}")
-        
+
+        if self._loading_devices:
+            logger.debug("Device load already in flight; skipping")
+            return
+
+        self._loading_devices = True
+        self.available_header.setText(f"Loading devices from {server.display_name}...")
         logger.info(f"Loading devices from {server.ip_address}")
-        
-        # Clear table
+
+        run_async(
+            self.usbip.list_remote_devices,
+            server.ip_address,
+            server.port,
+            on_result=lambda devices, s=server: self._on_devices_loaded(s, devices),
+            on_error=lambda msg, s=server: self._on_devices_error(s, msg),
+            on_finished=lambda: setattr(self, "_loading_devices", False),
+        )
+
+    def _on_devices_loaded(self, server: USBIPServer, devices: List[USBDevice]):
+        """Populate the table once the background fetch returns."""
+        # A different server may have been selected while this was in flight.
+        if self.current_server is None or server.ip_address != self.current_server.ip_address:
+            return
+
+        self.devices = devices
+        server.device_count = len(devices)
+        self.devices_loaded.emit(server.ip_address, devices)
+
+        selected = self._selected_busid()
         self.device_table.setRowCount(0)
-        
-        try:
-            # Get devices from server
-            self.devices = self.usbip.list_remote_devices(server.ip_address, server.port)
-            
-            if not self.devices:
-                self.available_header.setText(
-                    f"No devices found on {server.display_name}"
-                )
+
+        if not devices:
+            self.available_header.setText(f"No devices found on {server.display_name}")
+            return
+
+        for device in devices:
+            self.add_device_row(device)
+
+        self._restore_selection(selected)
+        self.available_header.setText(
+            f"Devices on {server.display_name}: {len(devices)} found"
+        )
+
+    def _on_devices_error(self, server: USBIPServer, message: str):
+        logger.error(f"Failed to load devices from {server.ip_address}: {message}")
+        self.available_header.setText(f"Error loading devices: {message}")
+
+    def _selected_busid(self) -> Optional[str]:
+        """Remember which row was selected across a rebuild."""
+        row = self.device_table.currentRow()
+        if row < 0:
+            return None
+        item = self.device_table.item(row, 0)
+        return item.text() if item else None
+
+    def _restore_selection(self, busid: Optional[str]):
+        """Reselect a row by busid after the table was rebuilt."""
+        if not busid:
+            return
+        for row in range(self.device_table.rowCount()):
+            item = self.device_table.item(row, 0)
+            if item and item.text() == busid:
+                self.device_table.selectRow(row)
                 return
-            
-            # Update server device count
-            server.device_count = len(self.devices)
-            
-            # Populate table
-            for device in self.devices:
-                self.add_device_row(device)
-            
-            self.available_header.setText(
-                f"Devices on {server.display_name}: {len(self.devices)} found"
-            )
-        
-        except Exception as e:
-            logger.error(f"Failed to load devices: {e}")
-            self.available_header.setText(f"Error loading devices: {e}")
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Failed to load devices from {server.name}:\n\n{e}"
-            )
     
     def add_device_row(self, device: USBDevice):
         """Add a device row to the table"""
@@ -215,52 +259,62 @@ class DeviceListWidget(QWidget):
         
         if reply != QMessageBox.Yes:
             return
-        
-        # Attempt to attach
-        success, message = self.usbip.attach_device(
+
+        self.setEnabled(False)
+        self.available_header.setText(f"Attaching {device.busid}...")
+
+        run_async(
+            self.usbip.attach_device,
             self.current_server.ip_address,
             device.busid,
-            self.current_server.port
+            self.current_server.port,
+            on_result=self._on_attach_finished,
+            on_error=lambda msg: self._on_attach_finished((False, msg)),
         )
-        
+
+    def _on_attach_finished(self, outcome):
+        """Report the result of a background attach."""
+        self.setEnabled(True)
+        success, message = outcome
+
         if success:
             QMessageBox.information(
-                self,
-                "Success",
-                f"Device attached successfully!\n\n{message}"
+                self, "Success", f"Device attached successfully!\n\n{message}"
             )
-            
-            # Refresh both lists
-            self.load_devices(self.current_server)
+            if self.current_server:
+                self.load_devices(self.current_server)
             self.refresh_attached_devices()
         else:
             QMessageBox.critical(
                 self,
                 "Error",
                 f"Failed to attach device:\n\n{message}\n\n"
-                "Make sure you have administrator/root privileges."
+                "Make sure you have administrator/root privileges.",
             )
     
     def refresh_attached_devices(self):
-        """Refresh list of attached devices"""
+        """Refresh list of attached devices (off the GUI thread)"""
+        if self._loading_attached:
+            return
+
+        self._loading_attached = True
         logger.debug("Refreshing attached devices")
-        
-        # Clear table
+
+        run_async(
+            self.usbip.list_attached_devices,
+            on_result=self._on_attached_loaded,
+            on_error=lambda msg: logger.error(f"Failed to refresh attached devices: {msg}"),
+            on_finished=lambda: setattr(self, "_loading_attached", False),
+        )
+
+    def _on_attached_loaded(self, attached: list):
+        """Rebuild the attached table from a background result."""
+        self.attached_devices = attached
+        self.attached_loaded.emit(attached)
+
         self.attached_table.setRowCount(0)
-        
-        try:
-            # Get attached devices
-            self.attached_devices = self.usbip.list_attached_devices()
-            
-            if not self.attached_devices:
-                return
-            
-            # Populate table
-            for device_info in self.attached_devices:
-                self.add_attached_row(device_info)
-        
-        except Exception as e:
-            logger.error(f"Failed to refresh attached devices: {e}")
+        for device_info in attached:
+            self.add_attached_row(device_info)
     
     def add_attached_row(self, device_info: dict):
         """Add an attached device row"""
@@ -305,18 +359,25 @@ class DeviceListWidget(QWidget):
         
         if reply != QMessageBox.Yes:
             return
-        
-        # Attempt to detach
-        success, message = self.usbip.detach_device(port)
-        
+
+        self.setEnabled(False)
+
+        run_async(
+            self.usbip.detach_device,
+            port,
+            on_result=self._on_detach_finished,
+            on_error=lambda msg: self._on_detach_finished((False, msg)),
+        )
+
+    def _on_detach_finished(self, outcome):
+        """Report the result of a background detach."""
+        self.setEnabled(True)
+        success, message = outcome
+
         if success:
             QMessageBox.information(
-                self,
-                "Success",
-                f"Device detached successfully!\n\n{message}"
+                self, "Success", f"Device detached successfully!\n\n{message}"
             )
-            
-            # Refresh both lists
             self.refresh_attached_devices()
             if self.current_server:
                 self.load_devices(self.current_server)
@@ -325,7 +386,7 @@ class DeviceListWidget(QWidget):
                 self,
                 "Error",
                 f"Failed to detach device:\n\n{message}\n\n"
-                "Make sure you have administrator/root privileges."
+                "Make sure you have administrator/root privileges.",
             )
 
 

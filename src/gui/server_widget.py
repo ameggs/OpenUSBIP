@@ -22,6 +22,7 @@ from PySide6.QtGui import QColor
 
 from src.core.server_discovery import ServerDiscovery, USBIPServer
 from src.core.usbip_wrapper import USBIPWrapper
+from src.gui.workers import run_async
 from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -107,10 +108,25 @@ class ServerListWidget(QWidget):
         # Update header
         self.header_label.setText(f"Servers: {len(self.servers)}")
     
+    def _selected_ip(self):
+        """Remember which server was selected across a rebuild."""
+        item = self.server_list.currentItem()
+        if not item:
+            return None
+        server = item.data(Qt.UserRole)
+        return server.ip_address if server else None
+
     def update_server_list(self):
-        """Update the server list widget"""
+        """
+        Update the server list widget.
+
+        The refresh timer calls this every 5 seconds, so it must not silently
+        drop the user's selection -- doing so previously made "Remove Server"
+        unusable if you did not click it fast enough.
+        """
+        previously_selected = self._selected_ip()
         self.server_list.clear()
-        
+
         for ip, server in sorted(self.servers.items()):
             # Create list item
             item = QListWidgetItem()
@@ -132,7 +148,11 @@ class ServerListWidget(QWidget):
                 item.setForeground(QColor("#999999"))
             
             self.server_list.addItem(item)
-    
+
+            if server.ip_address == previously_selected:
+                self.server_list.setCurrentItem(item)
+                self.remove_btn.setEnabled(True)
+
     def get_server_type_icon(self, server_type: str) -> str:
         """Get icon for server type"""
         icons = {
@@ -157,26 +177,42 @@ class ServerListWidget(QWidget):
         if server:
             logger.info(f"Server selected: {server.name}")
             
-            # Check if server is online
-            if not server.is_online:
-                # Try to check if it's actually online
-                if self.discovery.check_server_online(server):
-                    server.is_online = True
-                    self.update_server_list()
-                else:
-                    QMessageBox.warning(
-                        self,
-                        "Server Offline",
-                        f"Server {server.name} ({server.ip_address}) is not responding.\n\n"
-                        "Please check:\n"
-                        "• Server is powered on\n"
-                        "• Network connection is working\n"
-                        "• USB/IP service is running on server"
-                    )
-                    return
-            
-            # Emit signal
+            # Already known good: select immediately.
+            if server.is_online:
+                self.server_selected.emit(server)
+                return
+
+            # Otherwise probe in the background; a dead host costs the full
+            # socket timeout and must not freeze the UI.
+            self.status_label.setText(f"Checking {server.name}...")
+            self.setEnabled(False)
+            run_async(
+                self.discovery.check_server_online,
+                server,
+                on_result=lambda online, srv=server: self._on_online_checked(srv, online),
+                on_error=lambda msg, srv=server: self._on_online_checked(srv, False),
+            )
+
+    def _on_online_checked(self, server: USBIPServer, online: bool):
+        """Handle the result of a background reachability probe."""
+        self.setEnabled(True)
+        self.status_label.setText("Auto-discovery active")
+
+        if online:
+            server.is_online = True
+            self.update_server_list()
             self.server_selected.emit(server)
+            return
+
+        QMessageBox.warning(
+            self,
+            "Server Offline",
+            f"Server {server.name} ({server.ip_address}) is not responding.\n\n"
+            "Please check:\n"
+            "• Server is powered on\n"
+            "• Network connection is working\n"
+            "• USB/IP service is running on server"
+        )
     
     def add_manual_server(self):
         """Add a server manually"""
@@ -223,24 +259,16 @@ class ServerListWidget(QWidget):
             self.update_server_list()
             
             logger.info(f"Manually added server: {server.name}")
-            
-            # Check if online
-            if self.discovery.check_server_online(server):
-                server.is_online = True
-                self.update_server_list()
-                QMessageBox.information(
-                    self,
-                    "Server Added",
-                    f"Server {server.name} added successfully and is online!"
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Server Added",
-                    f"Server {server.name} added but is not responding.\n\n"
-                    "The server may be offline or USB/IP service is not running."
-                )
-        
+
+            # Probe reachability in the background so a wrong IP does not
+            # freeze the dialog for the full socket timeout.
+            run_async(
+                self.discovery.check_server_online,
+                server,
+                on_result=lambda online, srv=server: self._on_manual_server_checked(srv, online),
+                on_error=lambda msg, srv=server: self._on_manual_server_checked(srv, False),
+            )
+
         except Exception as e:
             logger.error(f"Failed to add server: {e}")
             QMessageBox.critical(
@@ -249,6 +277,25 @@ class ServerListWidget(QWidget):
                 f"Failed to add server: {e}"
             )
     
+    def _on_manual_server_checked(self, server: USBIPServer, online: bool):
+        """Report whether a newly added manual server answered."""
+        server.is_online = online
+        self.update_server_list()
+
+        if online:
+            QMessageBox.information(
+                self,
+                "Server Added",
+                f"Server {server.name} added successfully and is online!"
+            )
+        else:
+            QMessageBox.warning(
+                self,
+                "Server Added",
+                f"Server {server.name} added but is not responding.\n\n"
+                "The server may be offline or USB/IP service is not running."
+            )
+
     def remove_selected_server(self):
         """Remove selected server"""
         current_item = self.server_list.currentItem()

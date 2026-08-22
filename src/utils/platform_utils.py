@@ -116,12 +116,17 @@ def load_kernel_module(module: str) -> bool:
     if get_platform() != Platform.LINUX:
         return False
     
+    cmd = ["modprobe", module]
+    if not is_admin():
+        cmd = ["sudo", "-n"] + cmd
+
     try:
         subprocess.run(
-            ["modprobe", module],
+            cmd,
             check=True,
             capture_output=True,
-            timeout=5
+            timeout=5,
+            stdin=subprocess.DEVNULL,
         )
         return True
     except Exception:
@@ -133,23 +138,42 @@ def run_command(cmd: List[str], timeout: int = 10, require_admin: bool = False) 
     Run a system command
     Returns: (return_code, stdout, stderr)
     """
+    used_sudo = False
     if require_admin and not is_admin():
-        # Prepend sudo on Linux
+        # Prepend sudo on Linux. -n is essential: stdin is not a terminal here
+        # (capture_output pipes it), so an interactive password prompt would
+        # block until the timeout rather than ever being answerable.
         if get_platform() == Platform.LINUX:
-            cmd = ["sudo"] + cmd
-    
+            cmd = ["sudo", "-n"] + cmd
+            used_sudo = True
+
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=timeout
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
-        return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired:
         return -1, "", "Command timed out"
+    except FileNotFoundError:
+        return -1, "", f"Command not found: {cmd[0]}"
     except Exception as e:
         return -1, "", str(e)
+
+    # Turn sudo's own refusal into something a user can act on, rather than
+    # surfacing the raw "a password is required" in a dialog.
+    if used_sudo and result.returncode != 0 and "password is required" in result.stderr:
+        return result.returncode, result.stdout, (
+            "Root privileges are required for this operation, but sudo asked for "
+            "a password and none could be supplied.\n\n"
+            "Run the installer to configure passwordless sudo for usbip, or add:\n"
+            f"  {os.getenv('USER', 'youruser')} ALL=(ALL) NOPASSWD: {find_command('usbip')}\n"
+            "to /etc/sudoers.d/usbip (validate with: sudo visudo -c -f /etc/sudoers.d/usbip)"
+        )
+
+    return result.returncode, result.stdout, result.stderr
 
 
 def get_local_ip() -> str:
