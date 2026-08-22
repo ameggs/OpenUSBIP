@@ -198,14 +198,34 @@ echo ""
 # Create systemd service for usbipd
 echo "⚙️  Creating systemd services..."
 
-sudo tee /etc/systemd/system/usbipd.service > /dev/null << 'USBIPD_SERVICE'
+# Locate usbipd. Its path varies by distro: /usr/sbin on some Debian builds,
+# /usr/bin on Ubuntu/Zorin, and under /usr/lib/linux-tools/<ver>/ when it
+# comes from linux-tools-generic. Never hardcode it.
+USBIPD_BIN="$(command -v usbipd 2>/dev/null || true)"
+if [ -z "$USBIPD_BIN" ]; then
+    for candidate in /usr/sbin/usbipd /usr/bin/usbipd /usr/lib/linux-tools/*/usbipd; do
+        if [ -x "$candidate" ]; then
+            USBIPD_BIN="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "$USBIPD_BIN" ]; then
+    echo "❌ ERROR: could not locate the 'usbipd' binary."
+    echo "   Install it first (Debian/Ubuntu: sudo apt install linux-tools-generic)."
+    exit 1
+fi
+echo "   Found usbipd at: $USBIPD_BIN"
+
+sudo tee /etc/systemd/system/usbipd.service > /dev/null << USBIPD_SERVICE
 [Unit]
 Description=USB/IP Daemon
 After=network.target
 
 [Service]
 Type=forking
-ExecStart=/usr/sbin/usbipd -D
+ExecStart=$USBIPD_BIN -D
 Restart=always
 RestartSec=5
 
@@ -224,7 +244,7 @@ Wants=usbipd.service
 Type=simple
 User=$USER
 WorkingDirectory=$HOME
-ExecStart=/usr/bin/python3 $INSTALL_DIR/openusbip_server.py
+ExecStart=/usr/bin/python3 $INSTALL_DIR/openusbip_server.py --daemon
 Restart=always
 RestartSec=10
 

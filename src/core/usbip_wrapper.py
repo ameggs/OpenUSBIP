@@ -8,8 +8,17 @@ from typing import List, Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
 
-from ..utils.platform_utils import Platform, get_platform, run_command, find_command
-from ..utils.logger import setup_logger
+import os
+import sys
+
+# Ensure the repository root is importable so `src.*` resolves consistently,
+# whether this module is imported by an entry point or run directly.
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from src.utils.platform_utils import Platform, get_platform, run_command, find_command
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

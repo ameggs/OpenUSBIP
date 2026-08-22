@@ -7,8 +7,10 @@ Main entry point for the USB/IP client application
 import sys
 import os
 
-# Add src directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Ensure the repository root is importable so `src.*` resolves consistently.
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 def main():
     """Main entry point"""
@@ -24,8 +26,8 @@ def main():
         sys.exit(1)
     
     # Import after path is set
-    from utils.platform_utils import check_usbip_installed, get_platform, check_kernel_modules, load_kernel_module
-    from utils.logger import setup_logger
+    from src.utils.platform_utils import check_usbip_installed, get_platform, check_kernel_modules, load_kernel_module
+    from src.utils.logger import setup_logger
     
     logger = setup_logger("OpenUSBIP", level=10)  # DEBUG level
     
@@ -65,7 +67,7 @@ def main():
     app.setOrganizationName("OpenUSBIP")
     
     # Import and create main window
-    from gui.main_window import MainWindow
+    from src.gui.main_window import MainWindow
     
     window = MainWindow(mode="client")
     window.show()

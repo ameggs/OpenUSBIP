@@ -20,9 +20,14 @@ except ImportError:
     Zeroconf = None  # type: ignore
     ServiceInfo = None  # type: ignore
 
-import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+import sys
+
+# Ensure the repository root is importable so `src.*` resolves consistently,
+# whether this module is imported by an entry point or run directly.
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from src.utils.logger import setup_logger
 

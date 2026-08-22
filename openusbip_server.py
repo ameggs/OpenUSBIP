@@ -8,21 +8,48 @@ import sys
 import os
 import socket
 
-# Add src directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Ensure the repository root is importable so `src.*` resolves consistently.
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-def main():
+def parse_args(argv=None):
+    """Parse command-line arguments"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="openusbip_server",
+        description="OpenUSBIP server: share local USB devices over the network.",
+    )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Run non-interactively (for systemd). Never prompts.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=3240,
+        help="USB/IP port to advertise (default: 3240).",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
     """Main entry point"""
+    args = parse_args(argv)
+    interactive = not args.daemon
+
     print("OpenUSBIP Server v0.1.0")
     print("=" * 50)
     
     # Import after path is set
-    from utils.platform_utils import (
+    from src.utils.platform_utils import (
         check_usbip_installed, get_platform, check_kernel_modules,
         load_kernel_module, get_local_ip
     )
-    from utils.logger import setup_logger
-    from core.server_discovery import advertise_server
+    from src.utils.logger import setup_logger
+    from src.core.server_discovery import advertise_server
     
     logger = setup_logger("OpenUSBIP-Server", level=10)  # DEBUG level
     
@@ -73,7 +100,7 @@ def main():
     print(f"Server Information:")
     print(f"  Hostname: {hostname}")
     print(f"  IP Address: {local_ip}")
-    print(f"  Port: 3240 (USB/IP default)")
+    print(f"  Port: {args.port}")
     print(f"{'=' * 50}\n")
     
     # Check if usbipd is running
@@ -92,18 +119,23 @@ def main():
             print("\nTo start usbipd:")
             print("  sudo usbipd -D")
             print("\nOr create a systemd service for auto-start on boot")
-            
-            # Ask if user wants to start it now
-            try:
-                response = input("\nStart usbipd now? (y/n): ")
-                if response.lower() == 'y':
-                    print("Starting usbipd...")
-                    subprocess.run(["sudo", "usbipd", "-D"], check=True)
-                    print("✅ usbipd started")
-            except KeyboardInterrupt:
-                print("\nCancelled")
-            except Exception as e:
-                print(f"❌ Failed to start usbipd: {e}")
+
+            # Only prompt when a human is actually attached. Under systemd
+            # (or any redirected stdin) input() raises EOFError immediately.
+            if interactive and sys.stdin.isatty():
+                try:
+                    response = input("\nStart usbipd now? (y/n): ")
+                    if response.lower() == 'y':
+                        print("Starting usbipd...")
+                        subprocess.run(["sudo", "-n", "usbipd", "-D"], check=True)
+                        print("✅ usbipd started")
+                except KeyboardInterrupt:
+                    print("\nCancelled")
+                except Exception as e:
+                    print(f"❌ Failed to start usbipd: {e}")
+            else:
+                print("\nRunning non-interactively; not starting usbipd automatically.")
+                print("Enable it with: sudo systemctl enable --now usbipd")
     
     except Exception as e:
         logger.warning(f"Could not check usbipd status: {e}")
@@ -113,7 +145,7 @@ def main():
     print("Available USB Devices:")
     print(f"{'=' * 50}\n")
     
-    from core.usbip_wrapper import USBIPWrapper
+    from src.core.usbip_wrapper import USBIPWrapper
     
     usbip = USBIPWrapper()
     devices = usbip.list_local_devices()
@@ -137,7 +169,7 @@ def main():
         
         zeroconf = advertise_server(
             name=hostname,
-            port=3240,
+            port=args.port,
             server_type=server_type
         )
         
@@ -160,7 +192,7 @@ def main():
             print("❌ Failed to advertise server (zeroconf not available)")
             print("   Clients will need to add this server manually")
             print(f"   IP: {local_ip}")
-            print(f"   Port: 3240")
+            print(f"   Port: {args.port}")
     
     except KeyboardInterrupt:
         print("\n\nExiting...")

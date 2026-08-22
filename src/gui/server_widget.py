@@ -3,9 +3,14 @@ Server List Widget
 Displays discovered and manual USB/IP servers
 """
 
-import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+import sys
+
+# Ensure the repository root is importable so `src.*` resolves consistently,
+# whether this module is imported by an entry point or run directly.
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton,

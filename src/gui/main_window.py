@@ -7,13 +7,15 @@ import sys
 import os
 from typing import Optional
 
-# Add parent directory to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+# Ensure the repository root is importable so `src.*` resolves consistently,
+# whether this module is imported by an entry point or run directly.
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QPushButton, QLabel, QTabWidget, QStatusBar,
-    QMenuBar, QMenu, QMessageBox, QSplitter
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QStatusBar, QMessageBox, QSplitter
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon
@@ -23,9 +25,9 @@ from src.core.server_discovery import ServerDiscovery, USBIPServer
 from src.utils.logger import setup_logger
 from src.utils.platform_utils import get_platform, check_usbip_installed, is_admin
 
-from .server_widget import ServerListWidget
-from .device_widget import DeviceListWidget
-from .system_tray import SystemTray
+from src.gui.server_widget import ServerListWidget
+from src.gui.device_widget import DeviceListWidget
+from src.gui.system_tray import SystemTray
 
 logger = setup_logger(__name__)
 
@@ -42,6 +44,10 @@ class MainWindow(QMainWindow):
         self.mode = mode  # "client" or "server"
         self.current_server: Optional[USBIPServer] = None
         self.enable_tray = enable_tray
+
+        # Set when the user explicitly chooses Quit, so closeEvent knows to
+        # actually exit instead of minimising back to the tray.
+        self._really_quit = False
         
         # Core components
         self.usbip = USBIPWrapper()
@@ -150,7 +156,8 @@ class MainWindow(QMainWindow):
         
         exit_action = QAction("E&xit", self)
         exit_action.setShortcut("Ctrl+Q")
-        exit_action.triggered.connect(self.close)
+        # Exit must actually exit, not bounce to the tray like closing the window does.
+        exit_action.triggered.connect(self.quit_application)
         file_menu.addAction(exit_action)
         
         # Servers menu
@@ -368,7 +375,21 @@ class MainWindow(QMainWindow):
     def quit_application(self):
         """Quit the application completely"""
         logger.info("Quitting application from tray")
+
+        self._really_quit = True
+
+        # Tear down background work before the event loop stops, otherwise
+        # the zeroconf thread can keep the process alive.
+        if self.discovery.is_running:
+            self.discovery.stop()
+        self.refresh_timer.stop()
+
+        # Hide the tray icon so closeEvent cannot bounce us back into it.
+        if self.tray:
+            self.tray.hide()
+
         self.close()
+        QApplication.quit()
     
     def attach_device_from_tray(self, server_ip: str, busid: str):
         """Attach a device from the system tray menu"""
@@ -418,8 +439,9 @@ class MainWindow(QMainWindow):
     
     def closeEvent(self, event):
         """Handle window close event"""
-        # If tray is enabled, minimize to tray instead of closing
-        if self.tray and self.tray.tray_icon.isVisible():
+        # If tray is enabled, minimize to tray instead of closing -- unless the
+        # user picked Quit, in which case fall through and actually exit.
+        if not self._really_quit and self.tray and self.tray.tray_icon.isVisible():
             event.ignore()
             self.hide()
             if self.tray:
@@ -443,8 +465,6 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    from PySide6.QtWidgets import QApplication
-    
     app = QApplication(sys.argv)
     app.setApplicationName("OpenUSBIP")
     
