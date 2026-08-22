@@ -17,11 +17,12 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QStatusBar, QMessageBox, QSplitter
 )
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QIcon
 
 from src.core.usbip_wrapper import USBIPWrapper
 from src.core.server_discovery import ServerDiscovery, USBIPServer
+from src.core.config_manager import ConfigManager
 from src.utils.logger import setup_logger
 from src.utils.platform_utils import get_platform, check_usbip_installed, is_admin
 
@@ -35,10 +36,7 @@ logger = setup_logger(__name__)
 
 class MainWindow(QMainWindow):
     """Main application window"""
-    
-    # Signals
-    server_selected = Signal(USBIPServer)
-    
+
     def __init__(self, mode: str = "client", enable_tray: bool = True):
         super().__init__()
         
@@ -51,8 +49,13 @@ class MainWindow(QMainWindow):
         self._really_quit = False
         
         # Core components
+        self.config = ConfigManager()
         self.usbip = USBIPWrapper()
         self.discovery = ServerDiscovery()
+
+        # Re-add servers the user saved in a previous session. Without this
+        # every manually added server was lost on exit.
+        self._restore_saved_servers()
         
         # System tray
         self.tray = None
@@ -72,6 +75,7 @@ class MainWindow(QMainWindow):
         
         # Setup UI
         self.init_ui()
+        self._restore_geometry()
         
         # Start discovery if in client mode
         if self.mode == "client":
@@ -86,6 +90,40 @@ class MainWindow(QMainWindow):
         if self.tray:
             self.tray.show()
     
+    def _restore_saved_servers(self):
+        """Load manually added servers from the config file into discovery."""
+        try:
+            saved = self.config.get_manual_servers()
+        except Exception as exc:  # noqa: BLE001 - a bad config must not block startup
+            logger.error(f"Could not read saved servers: {exc}")
+            return
+
+        for server in saved:
+            self.discovery.add_manual_server(
+                server.ip_address, server.port, server.name
+            )
+        if saved:
+            logger.info(f"Restored {len(saved)} saved server(s) from config")
+
+    def _restore_geometry(self):
+        """Restore the window position and size from the previous session."""
+        x, y, width, height = self.config.get_window_geometry()
+        if width and height:
+            self.resize(width, height)
+        if x is not None and y is not None:
+            self.move(x, y)
+
+    def _persist_state(self):
+        """Write window geometry and server list back to disk."""
+        try:
+            geo = self.geometry()
+            self.config.set_window_geometry(
+                geo.x(), geo.y(), geo.width(), geo.height()
+            )
+            self.config.save()
+        except Exception as exc:  # noqa: BLE001 - never block shutdown on config
+            logger.error(f"Failed to save configuration: {exc}")
+
     def setup_tray_connections(self):
         """Setup system tray signal connections"""
         if not self.tray:
@@ -117,7 +155,7 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         
         # Server list (left side)
-        self.server_widget = ServerListWidget(self.discovery, self.usbip)
+        self.server_widget = ServerListWidget(self.discovery, self.usbip, self.config)
         self.server_widget.server_selected.connect(self.on_server_selected)
         splitter.addWidget(self.server_widget)
         
@@ -398,6 +436,8 @@ class MainWindow(QMainWindow):
         if self.tray:
             self.tray.hide()
 
+        self._persist_state()
+
         # Let in-flight background work finish before Qt tears down, otherwise
         # pool threads emit into destroyed objects.
         wait_for_workers()
@@ -491,7 +531,9 @@ class MainWindow(QMainWindow):
             
             # Stop refresh timer
             self.refresh_timer.stop()
-            
+
+            self._persist_state()
+
             logger.info("Application closing")
             event.accept()
 

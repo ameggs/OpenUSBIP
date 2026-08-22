@@ -30,6 +30,7 @@ if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 from src.utils.logger import setup_logger
+from src.utils.platform_utils import get_local_ip
 
 logger = setup_logger(__name__)
 
@@ -312,22 +313,6 @@ class ServerDiscovery:
             server.is_online = False
             return False
     
-    def scan_network(self, network_range: Optional[str] = None) -> List[USBIPServer]:
-        """
-        Scan network for USB/IP servers (fallback when mDNS doesn't work)
-        
-        Args:
-            network_range: Network range to scan (e.g., "192.168.1.0/24")
-                          If None, scans local subnet
-        
-        Returns:
-            List of discovered servers
-        """
-        # This is a simple implementation - could be enhanced
-        # For now, just return already discovered servers
-        logger.info("Network scan not yet implemented, use manual server addition")
-        return self.get_servers()
-
 
 def advertise_server(name: str, port: int = 3240, server_type: str = "linux") -> Optional[Zeroconf]:
     """
@@ -347,12 +332,8 @@ def advertise_server(name: str, port: int = 3240, server_type: str = "linux") ->
         return None
     
     try:
-        # Get local IP
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        local_ip = s.getsockname()[0]
-        s.close()
-        
+        local_ip = get_local_ip()
+
         # Create service info
         info = ServiceInfo(
             ServerDiscovery.SERVICE_TYPE,

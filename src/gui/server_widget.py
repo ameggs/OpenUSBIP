@@ -34,11 +34,13 @@ class ServerListWidget(QWidget):
     # Signals
     server_selected = Signal(USBIPServer)
     
-    def __init__(self, discovery: ServerDiscovery, usbip: USBIPWrapper):
+    def __init__(self, discovery: ServerDiscovery, usbip: USBIPWrapper, config=None):
         super().__init__()
-        
+
         self.discovery = discovery
         self.usbip = usbip
+        # Optional so the module's __main__ self-test can still construct one.
+        self.config = config
         self.servers = {}  # ip_address -> USBIPServer
         
         self.init_ui()
@@ -260,6 +262,12 @@ class ServerListWidget(QWidget):
             
             logger.info(f"Manually added server: {server.name}")
 
+            # Persist immediately so the server survives a restart even if the
+            # app is killed rather than closed cleanly.
+            if self.config:
+                self.config.add_manual_server(server)
+                self.config.save()
+
             # Probe reachability in the background so a wrong IP does not
             # freeze the dialog for the full socket timeout.
             run_async(
@@ -321,6 +329,10 @@ class ServerListWidget(QWidget):
             # Remove from local dict
             if server.ip_address in self.servers:
                 del self.servers[server.ip_address]
+
+            if self.config:
+                self.config.remove_manual_server(server.ip_address)
+                self.config.save()
             
             # Update UI
             self.update_server_list()
@@ -338,7 +350,7 @@ if __name__ == "__main__":
     discovery = ServerDiscovery()
     usbip = USBIPWrapper()
     
-    widget = ServerListWidget(discovery, usbip)
+    widget = ServerListWidget(discovery, usbip, config=None)
     widget.setWindowTitle("Server List Test")
     widget.resize(400, 500)
     widget.show()
