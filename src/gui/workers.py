@@ -12,7 +12,6 @@ import traceback
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
-
 # Strong references to in-flight workers. Without this a Worker can be garbage
 # collected while its pool thread is still running, taking its signals object
 # with it and dropping the result on the floor.

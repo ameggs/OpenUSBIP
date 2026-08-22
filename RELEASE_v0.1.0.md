@@ -44,7 +44,8 @@ OpenUSBIP is a complete, open-source USB over IP solution - a free alternative t
 - `openusbip_client.py` - Client application entry point
 - `openusbip_server.py` - Server application entry point
 - `install-server.sh` - One-command Raspberry Pi installer
-- `setup.sh` - Development environment setup
+- `install-client.sh` - Linux client installer
+- `install-server.sh` - Linux server installer
 
 ### Documentation (12 Files)
 - `README.md` - Main project documentation

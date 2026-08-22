@@ -20,7 +20,6 @@ from src.core.usbip_wrapper import (  # noqa: E402
     USBIPWrapper,
 )
 
-
 # --- fixtures: real `usbip` output, captured verbatim -----------------------
 
 LIST_LOCAL_OUTPUT = """\

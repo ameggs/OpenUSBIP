@@ -12,17 +12,24 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from typing import Optional, List
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
-    QTableWidget, QTableWidgetItem, QLabel, QMessageBox,
-    QGroupBox, QHeaderView, QAbstractItemView
-)
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor
 
-from src.core.usbip_wrapper import USBIPWrapper, USBDevice, DeviceState
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QGroupBox,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
 from src.core.server_discovery import USBIPServer
+from src.core.usbip_wrapper import DeviceState, USBDevice, USBIPWrapper
 from src.gui.workers import run_async
 from src.utils.logger import setup_logger
 
@@ -41,8 +48,8 @@ class DeviceListWidget(QWidget):
         super().__init__()
 
         self.usbip = usbip
-        self.current_server: Optional[USBIPServer] = None
-        self.devices: List[USBDevice] = []
+        self.current_server: USBIPServer | None = None
+        self.devices: list[USBDevice] = []
         self.attached_devices = []
 
         # Guards against the 5s refresh timer stacking up requests when a
@@ -51,20 +58,20 @@ class DeviceListWidget(QWidget):
         self._loading_attached = False
 
         self.init_ui()
-    
+
     def init_ui(self):
         """Initialize UI"""
         layout = QVBoxLayout(self)
-        
+
         # Available devices section
         available_group = QGroupBox("Available USB Devices")
         available_layout = QVBoxLayout(available_group)
-        
+
         # Header
         self.available_header = QLabel("Select a server to view devices")
         self.available_header.setStyleSheet("font-weight: bold; color: #666;")
         available_layout.addWidget(self.available_header)
-        
+
         # Device table
         self.device_table = QTableWidget()
         self.device_table.setColumnCount(5)
@@ -74,7 +81,7 @@ class DeviceListWidget(QWidget):
         self.device_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.device_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.device_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        
+
         # Resize columns
         header = self.device_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -82,15 +89,15 @@ class DeviceListWidget(QWidget):
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        
+
         available_layout.addWidget(self.device_table)
-        
+
         layout.addWidget(available_group)
-        
+
         # Attached devices section
         attached_group = QGroupBox("Attached Devices (This Computer)")
         attached_layout = QVBoxLayout(attached_group)
-        
+
         # Attached devices table
         self.attached_table = QTableWidget()
         self.attached_table.setColumnCount(4)
@@ -100,26 +107,26 @@ class DeviceListWidget(QWidget):
         self.attached_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.attached_table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.attached_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        
+
         # Resize columns
         header2 = self.attached_table.horizontalHeader()
         header2.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header2.setSectionResizeMode(1, QHeaderView.ResizeToContents)
         header2.setSectionResizeMode(2, QHeaderView.Stretch)
         header2.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        
+
         attached_layout.addWidget(self.attached_table)
-        
+
         # Refresh attached button
         refresh_attached_btn = QPushButton("🔄 Refresh Attached Devices")
         refresh_attached_btn.clicked.connect(self.refresh_attached_devices)
         attached_layout.addWidget(refresh_attached_btn)
-        
+
         layout.addWidget(attached_group)
-        
+
         # Initial load of attached devices
         self.refresh_attached_devices()
-    
+
     def load_devices(self, server: USBIPServer):
         """
         Load devices from a server.
@@ -146,7 +153,7 @@ class DeviceListWidget(QWidget):
             on_finished=lambda: setattr(self, "_loading_devices", False),
         )
 
-    def _on_devices_loaded(self, server: USBIPServer, devices: List[USBDevice]):
+    def _on_devices_loaded(self, server: USBIPServer, devices: list[USBDevice]):
         """Populate the table once the background fetch returns."""
         # A different server may have been selected while this was in flight.
         if self.current_server is None or server.ip_address != self.current_server.ip_address:
@@ -175,7 +182,7 @@ class DeviceListWidget(QWidget):
         logger.error(f"Failed to load devices from {server.ip_address}: {message}")
         self.available_header.setText(f"Error loading devices: {message}")
 
-    def _selected_busid(self) -> Optional[str]:
+    def _selected_busid(self) -> str | None:
         """Remember which row was selected across a rebuild."""
         row = self.device_table.currentRow()
         if row < 0:
@@ -183,7 +190,7 @@ class DeviceListWidget(QWidget):
         item = self.device_table.item(row, 0)
         return item.text() if item else None
 
-    def _restore_selection(self, busid: Optional[str]):
+    def _restore_selection(self, busid: str | None):
         """Reselect a row by busid after the table was rebuilt."""
         if not busid:
             return
@@ -192,24 +199,24 @@ class DeviceListWidget(QWidget):
             if item and item.text() == busid:
                 self.device_table.selectRow(row)
                 return
-    
+
     def add_device_row(self, device: USBDevice):
         """Add a device row to the table"""
         row = self.device_table.rowCount()
         self.device_table.insertRow(row)
-        
+
         # Bus ID
         busid_item = QTableWidgetItem(device.busid)
         self.device_table.setItem(row, 0, busid_item)
-        
+
         # Vendor:Product
         vid_pid_item = QTableWidgetItem(f"{device.vendor_id}:{device.product_id}")
         self.device_table.setItem(row, 1, vid_pid_item)
-        
+
         # Description
         desc_item = QTableWidgetItem(device.description)
         self.device_table.setItem(row, 2, desc_item)
-        
+
         # Status
         status_icon = self.get_status_icon(device.state)
         status_item = QTableWidgetItem(f"{status_icon} {device.state.value}")
@@ -218,16 +225,16 @@ class DeviceListWidget(QWidget):
         elif device.state == DeviceState.BUSY:
             status_item.setForeground(QColor("#FF9800"))
         self.device_table.setItem(row, 3, status_item)
-        
+
         # Action button
         attach_btn = QPushButton("📎 Attach")
         attach_btn.clicked.connect(lambda: self.attach_device(device))
-        
+
         if device.state != DeviceState.AVAILABLE:
             attach_btn.setEnabled(False)
-        
+
         self.device_table.setCellWidget(row, 4, attach_btn)
-    
+
     def get_status_icon(self, state: DeviceState) -> str:
         """Get icon for device state"""
         icons = {
@@ -237,15 +244,15 @@ class DeviceListWidget(QWidget):
             DeviceState.ERROR: "❌"
         }
         return icons.get(state, "❓")
-    
+
     def attach_device(self, device: USBDevice):
         """Attach a device"""
         if not self.current_server:
             QMessageBox.warning(self, "Error", "No server selected")
             return
-        
+
         logger.info(f"Attaching device {device.busid} from {self.current_server.ip_address}")
-        
+
         # Confirm
         reply = QMessageBox.question(
             self,
@@ -256,7 +263,7 @@ class DeviceListWidget(QWidget):
             "This will make the device available on this computer.",
             QMessageBox.Yes | QMessageBox.No
         )
-        
+
         if reply != QMessageBox.Yes:
             return
 
@@ -291,7 +298,7 @@ class DeviceListWidget(QWidget):
                 f"Failed to attach device:\n\n{message}\n\n"
                 "Make sure you have administrator/root privileges.",
             )
-    
+
     def refresh_attached_devices(self):
         """Refresh list of attached devices (off the GUI thread)"""
         if self._loading_attached:
@@ -315,40 +322,40 @@ class DeviceListWidget(QWidget):
         self.attached_table.setRowCount(0)
         for device_info in attached:
             self.add_attached_row(device_info)
-    
+
     def add_attached_row(self, device_info: dict):
         """Add an attached device row"""
         row = self.attached_table.rowCount()
         self.attached_table.insertRow(row)
-        
+
         # Port
         port_item = QTableWidgetItem(device_info.get('port', '?'))
         self.attached_table.setItem(row, 0, port_item)
-        
+
         # Bus ID
         busid_item = QTableWidgetItem(device_info.get('busid', '?'))
         self.attached_table.setItem(row, 1, busid_item)
-        
+
         # Remote server
         remote_host = device_info.get('remote_host', '?')
         remote_port = device_info.get('remote_port', '?')
         server_item = QTableWidgetItem(f"{remote_host}:{remote_port}")
         self.attached_table.setItem(row, 2, server_item)
-        
+
         # Detach button
         detach_btn = QPushButton("🔓 Detach")
         detach_btn.clicked.connect(
             lambda: self.detach_device(device_info.get('port', ''))
         )
         self.attached_table.setCellWidget(row, 3, detach_btn)
-    
+
     def detach_device(self, port: str):
         """Detach a device"""
         if not port:
             return
-        
+
         logger.info(f"Detaching device on port {port}")
-        
+
         # Confirm
         reply = QMessageBox.question(
             self,
@@ -356,7 +363,7 @@ class DeviceListWidget(QWidget):
             f"Detach device on port {port}?",
             QMessageBox.Yes | QMessageBox.No
         )
-        
+
         if reply != QMessageBox.Yes:
             return
 
@@ -392,15 +399,15 @@ class DeviceListWidget(QWidget):
 
 if __name__ == "__main__":
     from PySide6.QtWidgets import QApplication
-    
+
     app = QApplication(sys.argv)
-    
+
     # Create test widget
     usbip = USBIPWrapper()
-    
+
     widget = DeviceListWidget(usbip)
     widget.setWindowTitle("Device List Test")
     widget.resize(800, 600)
     widget.show()
-    
+
     sys.exit(app.exec())

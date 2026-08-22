@@ -3,8 +3,8 @@
 # OpenUSBIP Server - One-Command Installer
 # For Raspberry Pi and Linux SBCs
 #
-# Usage: curl -sSL https://your-url/install-server.sh | bash
-# Or: wget -qO- https://your-url/install-server.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/ameggs/OpenUSBIP/main/install-server.sh | bash
+# Or: wget -qO- https://raw.githubusercontent.com/ameggs/OpenUSBIP/main/install-server.sh | bash
 #
 
 set -e
@@ -64,119 +64,47 @@ echo "📁 Installing to: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# Download server script
-echo "⬇️  Downloading server script..."
-cat > openusbip_server.py << 'SERVERSCRIPT'
-#!/usr/bin/env python3
-"""
-OpenUSBIP Server - Simple USB/IP Server with mDNS
-"""
-import socket
-import subprocess
-import time
+# Install the real application.
+#
+# This previously wrote a simplified inline copy of the server via a heredoc,
+# which then drifted from the actual openusbip_server.py in the repository --
+# the systemd unit ran the inline copy, so fixes to the real one never took
+# effect. Install the repository itself instead.
+echo "⬇️  Installing OpenUSBIP..."
 
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return "127.0.0.1"
+# Work out whether we are running from a checkout or via curl | bash.
+SCRIPT_SRC=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    CANDIDATE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$CANDIDATE/openusbip_server.py" ] && [ -d "$CANDIDATE/src" ]; then
+        SCRIPT_SRC="$CANDIDATE"
+    fi
+fi
 
-def main():
-    print("=" * 60)
-    print("OpenUSBIP Server - Raspberry Pi")
-    print("=" * 60)
-    
-    hostname = socket.gethostname()
-    ip = get_local_ip()
-    
-    print(f"\nServer Info:")
-    print(f"  Hostname: {hostname}")
-    print(f"  IP: {ip}")
-    print(f"  Port: 3240")
-    
-    # Check if usbipd is running
-    try:
-        result = subprocess.run(["pgrep", "-x", "usbipd"], capture_output=True)
-        if result.returncode == 0:
-            print(f"\n✅ usbipd is running")
-        else:
-            print(f"\n❌ usbipd is NOT running")
-            print("Starting usbipd...")
-            subprocess.run(["sudo", "usbipd", "-D"])
-            time.sleep(1)
-            print("✅ usbipd started")
-    except Exception as e:
-        print(f"Error: {e}")
-    
-    # List USB devices
-    print(f"\n{'=' * 60}")
-    print("Available USB Devices:")
-    print("=" * 60)
-    
-    try:
-        result = subprocess.run(["/usr/sbin/usbip", "list", "-l"], 
-                              capture_output=True, text=True)
-        print(result.stdout)
-    except Exception as e:
-        print(f"Error listing devices: {e}")
-    
-    # Advertise via mDNS
-    print(f"\n{'=' * 60}")
-    print("mDNS Advertisement:")
-    print("=" * 60)
-    
-    try:
-        from zeroconf import ServiceInfo, Zeroconf
-        
-        info = ServiceInfo(
-            "_usbip._tcp.local.",
-            f"{hostname}._usbip._tcp.local.",
-            addresses=[socket.inet_aton(ip)],
-            port=3240,
-            properties={
-                'type': b'raspberry-pi',
-                'version': b'1.0'
-            },
-            server=f"{hostname}.local."
-        )
-        
-        zeroconf = Zeroconf()
-        zeroconf.register_service(info)
-        
-        print(f"✅ Server advertised as: {hostname}")
-        print(f"   Clients can auto-discover this server!")
-        print(f"\nPress Ctrl+C to stop...")
-        
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\n\nStopping...")
-            zeroconf.close()
-            print("✅ Server stopped")
-    
-    except ImportError:
-        print("❌ zeroconf not installed - no auto-discovery")
-        print(f"   Clients must add server manually:")
-        print(f"   IP: {ip}, Port: 3240")
-        print("\nServer is ready! Press Ctrl+C to stop...")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\nStopped")
+if [ -n "$SCRIPT_SRC" ]; then
+    echo "   Installing from local checkout: $SCRIPT_SRC"
+    cp -r "$SCRIPT_SRC/openusbip_server.py" "$SCRIPT_SRC/src" "$INSTALL_DIR/"
+    [ -f "$SCRIPT_SRC/requirements.txt" ] && cp "$SCRIPT_SRC/requirements.txt" "$INSTALL_DIR/"
+else
+    echo "   Fetching from GitHub..."
+    if ! command -v git > /dev/null 2>&1; then
+        sudo apt-get install -y git > /dev/null 2>&1
+    fi
+    TMP_CLONE="$(mktemp -d)"
+    git clone --depth 1 https://github.com/ameggs/OpenUSBIP.git "$TMP_CLONE/repo" > /dev/null 2>&1
+    cp -r "$TMP_CLONE/repo/openusbip_server.py" "$TMP_CLONE/repo/src" "$INSTALL_DIR/"
+    [ -f "$TMP_CLONE/repo/requirements.txt" ] && cp "$TMP_CLONE/repo/requirements.txt" "$INSTALL_DIR/"
+    rm -rf "$TMP_CLONE"
+fi
 
-if __name__ == "__main__":
-    main()
-SERVERSCRIPT
+if [ ! -f "$INSTALL_DIR/openusbip_server.py" ] || [ ! -d "$INSTALL_DIR/src" ]; then
+    echo "❌ ERROR: installation failed - openusbip_server.py or src/ is missing."
+    exit 1
+fi
 
-chmod +x openusbip_server.py
+chmod +x "$INSTALL_DIR/openusbip_server.py"
 
-echo "✅ Server script installed!"
+echo "✅ Server installed!"
 echo ""
 
 # Load kernel modules

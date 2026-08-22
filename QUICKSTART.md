@@ -15,7 +15,7 @@ Perfect for:
 
 ```bash
 cd ~/OpenUSBIP
-./setup.sh
+./install-client.sh
 ```
 
 This installs:

@@ -4,7 +4,8 @@
 # For Linux Desktop/Laptop
 #
 # Usage: sudo ./install-client.sh
-# Or: curl -sSL https://your-url/install-client.sh | bash
+# Must be run from a checkout (it launches the client from the repo directory):
+#   git clone https://github.com/ameggs/OpenUSBIP.git && cd OpenUSBIP && ./install-client.sh
 #
 
 set -e
@@ -142,8 +143,23 @@ echo "vhci_hcd" | sudo tee /etc/modules-load.d/usbip.conf > /dev/null
 echo "✅ Kernel modules configured!"
 echo ""
 
-# Get current directory (where the repo is)
+# Get current directory (where the repo is). This installer wires the desktop
+# launcher to the checkout, so it cannot run standalone via curl | bash.
+if [ -z "${BASH_SOURCE[0]:-}" ] || [ ! -f "${BASH_SOURCE[0]}" ]; then
+    echo "❌ ERROR: this installer must be run from a checkout, not piped from curl."
+    echo "   git clone https://github.com/ameggs/OpenUSBIP.git"
+    echo "   cd OpenUSBIP && ./install-client.sh"
+    exit 1
+fi
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ ! -f "$REPO_DIR/openusbip_client.py" ]; then
+    echo "❌ ERROR: openusbip_client.py not found in $REPO_DIR"
+    echo "   Run this script from inside the OpenUSBIP checkout."
+    exit 1
+fi
+
 echo "📁 Repository location: $REPO_DIR"
 echo ""
 

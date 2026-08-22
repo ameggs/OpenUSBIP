@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openusbip"
+version = "0.1.0"
+description = "Open Source USB over IP - a free, cross-platform alternative to VirtualHere"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "OpenUSBIP Contributors" }]
+keywords = ["usb", "usbip", "network", "remote", "virtualhere"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: Qt",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+]
+dependencies = [
+    "PySide6>=6.6.0",
+    "zeroconf>=0.131.0",
+    "pyyaml>=6.0.1",
+    "colorlog>=6.8.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4.0", "pytest-qt>=4.2.0", "ruff>=0.4.0"]
+
+[project.urls]
+Homepage = "https://github.com/ameggs/OpenUSBIP"
+Issues = "https://github.com/ameggs/OpenUSBIP/issues"
+
+[project.scripts]
+openusbip-client = "openusbip_client:main"
+openusbip-server = "openusbip_server:main"
+
+[tool.setuptools]
+packages = ["src", "src.core", "src.gui", "src.utils"]
+py-modules = ["openusbip_client", "openusbip_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+# E402: modules deliberately insert the repo root into sys.path before
+# importing `src.*`, so those imports cannot be at the top of the file.
+# Remove this once the project is installed as a package (pip install -e .).
+ignore = ["E501", "E402"]

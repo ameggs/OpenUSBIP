@@ -41,7 +41,20 @@ if (-not $pythonPath) {
 
     # Download and install Python
     $pythonInstaller = "$env:TEMP\python-installer.exe"
-    Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.11.8/python-3.11.8-amd64.exe" -OutFile $pythonInstaller
+    $pythonUrl = "https://www.python.org/ftp/python/3.11.8/python-3.11.8-amd64.exe"
+    Invoke-WebRequest -Uri $pythonUrl -OutFile $pythonInstaller
+
+    # Verify the download before executing it. The installer is Authenticode
+    # signed by the Python Software Foundation; refuse anything else rather
+    # than silently running a tampered or truncated binary.
+    $sig = Get-AuthenticodeSignature -FilePath $pythonInstaller
+    if ($sig.Status -ne "Valid" -or $sig.SignerCertificate.Subject -notlike "*Python Software Foundation*") {
+        Remove-Item $pythonInstaller -Force -ErrorAction SilentlyContinue
+        Write-Host "ERROR: Python installer failed signature verification. Aborting." -ForegroundColor Red
+        Write-Host "Install Python 3.10+ manually from https://www.python.org/downloads/" -ForegroundColor Yellow
+        exit 1
+    }
+    Write-Host "Python installer signature verified." -ForegroundColor Green
 
     Write-Host "Running Python installer..." -ForegroundColor Yellow
     Start-Process -FilePath $pythonInstaller -ArgumentList "/quiet InstallAllUsers=1 PrependPath=1" -Wait

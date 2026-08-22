@@ -4,9 +4,9 @@ OpenUSBIP Server
 Main entry point for the USB/IP server application (for Raspberry Pi/SBC)
 """
 
-import sys
 import os
 import socket
+import sys
 
 # Ensure the repository root is importable so `src.*` resolves consistently.
 _ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -42,21 +42,24 @@ def main(argv=None):
 
     print("OpenUSBIP Server v0.1.0")
     print("=" * 50)
-    
+
     # Import after path is set
-    from src.utils.platform_utils import (
-        check_usbip_installed, get_platform, check_kernel_modules,
-        load_kernel_module, get_local_ip
-    )
-    from src.utils.logger import setup_logger
     from src.core.server_discovery import advertise_server
-    
+    from src.utils.logger import setup_logger
+    from src.utils.platform_utils import (
+        check_kernel_modules,
+        check_usbip_installed,
+        get_local_ip,
+        get_platform,
+        load_kernel_module,
+    )
+
     logger = setup_logger("OpenUSBIP-Server", level=10)  # DEBUG level
-    
+
     # Check platform
     platform = get_platform()
     logger.info(f"Running on: {platform.value}")
-    
+
     if platform.value == "windows":
         logger.info("Windows detected - using usbipd-win")
         print("\nWindows Server Mode:")
@@ -67,16 +70,16 @@ def main(argv=None):
         print("  2. usbipd bind --busid <BUSID>")
         print("  3. Device will be available to clients")
         return
-    
+
     # Check USB/IP installation
     installed, msg = check_usbip_installed()
     if not installed:
         logger.error(msg)
         print(f"\nERROR: {msg}")
         sys.exit(1)
-    
+
     logger.info(msg)
-    
+
     # Check kernel modules (Linux only)
     if platform.value == "linux":
         loaded, missing = check_kernel_modules()
@@ -84,25 +87,25 @@ def main(argv=None):
             logger.warning(f"Missing kernel modules: {', '.join(missing)}")
             print(f"\nWARNING: Missing kernel modules: {', '.join(missing)}")
             print("Attempting to load modules...")
-            
+
             for module in missing:
                 if load_kernel_module(module):
                     logger.info(f"Loaded module: {module}")
                 else:
                     logger.error(f"Failed to load module: {module}")
                     print(f"ERROR: Failed to load {module}. Run: sudo modprobe {module}")
-    
+
     # Get local IP
     local_ip = get_local_ip()
     hostname = socket.gethostname()
-    
+
     print(f"\n{'=' * 50}")
-    print(f"Server Information:")
+    print("Server Information:")
     print(f"  Hostname: {hostname}")
     print(f"  IP Address: {local_ip}")
     print(f"  Port: {args.port}")
     print(f"{'=' * 50}\n")
-    
+
     # Check if usbipd is running
     import subprocess
     try:
@@ -111,7 +114,7 @@ def main(argv=None):
             capture_output=True,
             timeout=2
         )
-        
+
         if result.returncode == 0:
             print("✅ usbipd service is running")
         else:
@@ -136,49 +139,49 @@ def main(argv=None):
             else:
                 print("\nRunning non-interactively; not starting usbipd automatically.")
                 print("Enable it with: sudo systemctl enable --now usbipd")
-    
+
     except Exception as e:
         logger.warning(f"Could not check usbipd status: {e}")
-    
+
     # List available USB devices
     print(f"\n{'=' * 50}")
     print("Available USB Devices:")
     print(f"{'=' * 50}\n")
-    
+
     from src.core.usbip_wrapper import USBIPWrapper
-    
+
     usbip = USBIPWrapper()
     devices = usbip.list_local_devices()
-    
+
     if devices:
         for i, device in enumerate(devices, 1):
             print(f"{i}. {device}")
     else:
         print("No USB devices found or usbipd not running")
-    
+
     # Advertise server via mDNS
     print(f"\n{'=' * 50}")
     print("mDNS Advertisement:")
     print(f"{'=' * 50}\n")
-    
+
     try:
         # Detect server type
         server_type = "linux"
         if "raspberry" in hostname.lower() or "rpi" in hostname.lower():
             server_type = "raspberry-pi"
-        
+
         zeroconf = advertise_server(
             name=hostname,
             port=args.port,
             server_type=server_type
         )
-        
+
         if zeroconf:
             print(f"✅ Server advertised as: {hostname}")
             print(f"   Type: {server_type}")
-            print(f"   Clients can auto-discover this server")
+            print("   Clients can auto-discover this server")
             print("\nPress Ctrl+C to stop advertising...")
-            
+
             try:
                 # Keep running
                 import time
@@ -193,7 +196,7 @@ def main(argv=None):
             print("   Clients will need to add this server manually")
             print(f"   IP: {local_ip}")
             print(f"   Port: {args.port}")
-    
+
     except KeyboardInterrupt:
         print("\n\nExiting...")
     except Exception as e:

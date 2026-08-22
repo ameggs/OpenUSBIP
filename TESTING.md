@@ -1,192 +1,96 @@
-# OpenUSBIP Testing Checklist
+# OpenUSBIP Testing
 
-## System Tray Integration Testing
-
-### ✅ Completed Tests
-
-#### 1. Tray Icon Initialization
-- [x] Tray icon appears in system tray
-- [x] Custom icon loads correctly (openusbip.svg)
-- [x] Tooltip shows "OpenUSBIP - USB over IP Client"
-
-#### 2. Tray Menu Structure
-- [x] "Show Window" action exists
-- [x] "Servers" submenu exists
-- [x] "Attached Devices" submenu exists
-- [x] "Refresh" action exists
-- [x] "Quit" action exists
-
-#### 3. Window Management
-- [x] Single-click tray icon shows window
-- [x] Double-click tray icon shows window
-- [x] Closing window minimizes to tray (doesn't quit)
-- [x] Notification shown when minimizing to tray
-- [x] Window can be restored from tray
-
-#### 4. Tray Methods
-- [x] `show_from_tray()` method exists
-- [x] `quit_application()` method exists
-- [x] `attach_device_from_tray()` method exists
-- [x] `detach_device_from_tray()` method exists
-
-#### 5. Signal Connections
-- [x] Tray signals connected to main window
-- [x] Server discovery updates tray menu
-- [x] Device list updates tray menu
-- [x] Attached devices update tray menu
-
-### 🔨 Manual Testing Required
-
-#### 1. Server Discovery in Tray
-- [ ] Tray menu shows discovered servers
-- [ ] Server submenu shows server IP and port
-- [ ] Server submenu shows available devices
-- [ ] Clicking device in tray attaches it
-- [ ] Notification shown when device attached from tray
-
-#### 2. Device Management in Tray
-- [ ] Attached devices appear in "Attached Devices" menu
-- [ ] Clicking attached device detaches it
-- [ ] Notification shown when device detached from tray
-- [ ] Tray menu updates when devices are attached/detached
-
-#### 3. Notifications
-- [ ] Server discovered notification
-- [ ] Device attached notification
-- [ ] Device detached notification
-- [ ] Error notifications (attach/detach failures)
-- [ ] Minimize to tray notification
-
-#### 4. Multi-Server Support
-- [ ] Multiple servers appear in tray menu
-- [ ] Each server has its own submenu
-- [ ] Devices from different servers are separated
-- [ ] Can attach devices from different servers
-
-#### 5. Edge Cases
-- [ ] Tray works when no servers found
-- [ ] Tray works when no devices available
-- [ ] Tray works when server disconnects
-- [ ] Tray works when device is unplugged while attached
-- [ ] Quit from tray actually closes application
-
-## Core Functionality Testing
-
-### ✅ Verified Working
-
-#### Server (Raspberry Pi @ 192.168.0.34)
-- [x] usbipd service running
-- [x] openusbip-server service running
-- [x] usb-auto-bind service running
-- [x] mDNS advertisement working
-- [x] USB hotplug detection working
-- [x] Auto-start on boot configured
-
-#### Client (Pop!_OS @ 192.168.0.225)
-- [x] GUI launches from desktop icon
-- [x] Auto-discovers Raspberry Pi server
-- [x] Lists available USB devices
-- [x] Real-time device updates (plug/unplug)
-- [x] Attach device works
-- [x] Detach device works
-- [x] Passwordless sudo configured
-
-### 🔨 Additional Testing Needed
-
-#### Performance
-- [ ] Test with multiple USB devices
-- [ ] Test with high-bandwidth devices (USB 3.0)
-- [ ] Test with multiple simultaneous connections
-- [ ] Test network latency impact
-
-#### Reliability
-- [ ] Test server restart while client connected
-- [ ] Test network disconnection/reconnection
-- [ ] Test device removal while attached
-- [ ] Test client crash recovery
-
-#### Multi-Server
-- [ ] Set up second Raspberry Pi server
-- [ ] Verify both servers appear in GUI
-- [ ] Verify both servers appear in tray menu
-- [ ] Test switching between servers
-
-## Test Devices
-
-### ✅ Tested and Working
-- Logitech Unifying Receiver (USB HID)
-- USB Flash Drive (USB Storage)
-
-### 📋 To Test
-- USB Keyboard
-- USB Mouse
-- Arduino/Serial Device
-- USB Printer
-- USB Webcam (may have latency)
-- USB Audio Device (may have timing issues)
-
-## Installation Testing
-
-### ✅ Verified
-- [x] One-command installer works on Raspberry Pi
-- [x] Desktop launcher created successfully
-- [x] Icon appears in application menu
-- [x] Passwordless sudo configured correctly
-
-### 📋 To Test
-- [ ] Install on fresh Raspberry Pi OS
-- [ ] Install on Ubuntu Desktop
-- [ ] Install on Debian
-- [ ] Install on Arch Linux
-- [ ] Test uninstall process
-
-## Documentation Testing
-
-### ✅ Complete
-- [x] README.md updated with features
-- [x] System tray documented
-- [x] One-command installer documented
-- [x] Current status section added
-
-### 📋 To Add
-- [ ] Screenshots of GUI
-- [ ] Screenshot of system tray menu
-- [ ] Video demo
-- [ ] Troubleshooting guide
-- [ ] FAQ section
-
-## Next Steps
-
-1. **Manual Tray Testing**: Launch the GUI and test all tray menu items
-2. **Multi-Server Setup**: Configure second Raspberry Pi
-3. **Device Testing**: Test with various USB device types
-4. **Documentation**: Add screenshots and video demo
-5. **Packaging**: Create AppImage or .deb package
-6. **Windows Support**: Test on Windows with usbipd-win
-
-## Known Issues
-
-None currently - all implemented features working as expected!
-
-## Test Commands
+## Automated tests
 
 ```bash
-# Start client GUI
-cd ~/OpenUSBIP
-python3 openusbip_client.py
-
-# Check server status (on Raspberry Pi)
-ssh pi@192.168.0.34
-sudo systemctl status usbipd openusbip-server usb-auto-bind
-
-# List bound devices (on Raspberry Pi)
-ssh pi@192.168.0.34
-usbip list -l
-
-# Check mDNS advertisement
-avahi-browse -rt _usbip._tcp
-
-# Monitor logs (on Raspberry Pi)
-ssh pi@192.168.0.34
-sudo journalctl -u openusbip-server -f
+pip install -r requirements-dev.txt
+QT_QPA_PLATFORM=offscreen pytest
 ```
+
+CI runs this on Python 3.10 and 3.12, plus `ruff check .`, a byte-compile of
+the whole tree, and a syntax check of the installers.
+
+### What is covered
+
+`tests/test_usbip_wrapper.py` pins the output parsers against captured `usbip`
+output. These are the most fragile part of the project — they consume the
+free-form text of whatever `usbip` build a distro ships — and they are pure
+functions over strings, so they are cheap to test.
+
+| Area | Covered |
+|---|---|
+| `usbip list -l` parsing | busid, vendor/product IDs, description, empty output |
+| `usbip list -r` parsing | device rows, ignoring `/sys/devices` continuation lines |
+| `usbip port` parsing | port number, remote host, busid, no-devices case |
+| `--tcp-port` handling | omitted at 3240, passed as a global flag before the subcommand |
+| Failure paths | error text propagated, missing binary reported not crashed |
+
+`tests/test_entrypoints.py` covers import health:
+
+| Area | Covered |
+|---|---|
+| Every core module imports | regression guard |
+| Both entry points import | regression guard |
+| `openusbip_server.py --help` runs as a subprocess | the original crash |
+| Only one canonical module identity | `src.core.X` vs `core.X` duplication |
+| No imports reach above the package | the `from ..utils` style that caused it |
+
+### Not covered by automated tests
+
+The GUI widgets are exercised only by construction, not by simulated
+interaction. `pytest-qt` is available in the dev requirements if you want to
+add widget-level tests.
+
+Nothing here talks to a real USB device or a real remote server — every usbip
+invocation is stubbed. End-to-end behaviour still needs the manual pass below.
+
+## Manual test checklist
+
+Unchecked means unverified. Do not tick an item because the code looks right;
+the tray Quit bug survived precisely because "the method exists" was treated as
+equivalent to "the feature works".
+
+### System tray
+
+- [ ] Tray icon appears, with the custom icon and correct tooltip
+- [ ] Single and double click both restore the window
+- [ ] Closing the window minimises to tray and shows a notification
+- [ ] Tray menu lists discovered servers, each with IP/port and devices
+- [ ] Clicking a device in the tray attaches it, with a notification
+- [ ] Attached devices appear under "Attached Devices" and can be detached
+- [ ] Error notifications appear on attach/detach failure
+- [ ] **Quit from the tray actually exits the process** (was broken; fixed and
+      covered by an automated check, but confirm on a real desktop)
+- [ ] File → Exit also actually exits
+
+### Servers and devices
+
+- [ ] Servers are discovered over mDNS
+- [ ] A manually added server persists across a restart
+- [ ] A server on a non-default port can be listed and attached from
+- [ ] Window size and position are restored on next launch
+- [ ] Removing a server removes it permanently
+
+### Responsiveness
+
+- [ ] Selecting an unreachable server does not freeze the UI
+      (previously a 15 second hard freeze)
+- [ ] The UI stays interactive while devices load
+- [ ] Selection is not lost when the 5 second refresh fires
+
+### Edge cases
+
+- [ ] Works when no servers are found
+- [ ] Works when a server has no devices
+- [ ] Handles a server disconnecting mid-session
+- [ ] Handles a device being unplugged while attached
+- [ ] Sensible error when `vhci_hcd` is not loaded
+- [ ] Sensible error when passwordless sudo is not configured
+
+### Server host
+
+- [ ] `openusbip_server.py` runs from a terminal
+- [ ] `openusbip_server.py --daemon` runs without prompting
+- [ ] `systemctl status openusbip-server` is active, not restart-looping
+- [ ] `systemctl status usbipd` is active
+- [ ] The server survives a reboot

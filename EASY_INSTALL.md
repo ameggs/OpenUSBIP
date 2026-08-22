@@ -59,7 +59,7 @@ git clone https://github.com/yourusername/openusbip.git OpenUSBIP
 cd OpenUSBIP
 
 # Run setup
-./setup.sh
+./install-client.sh
 
 # Install USB/IP client tools
 sudo apt install linux-tools-generic
@@ -94,7 +94,7 @@ bash <(curl -sSL https://your-url/install-server.sh)
 ```bash
 # Install and run
 cd ~/OpenUSBIP
-./setup.sh
+./install-client.sh
 python3 openusbip_client.py
 ```
 

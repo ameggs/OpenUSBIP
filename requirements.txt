@@ -1,22 +1,14 @@
-# OpenUSBIP Requirements
+# OpenUSBIP runtime dependencies
+# Development/test dependencies live in requirements-dev.txt
 
-# GUI Framework
+# GUI framework (client only; the server runs headless)
 PySide6>=6.6.0
 
-# Network Discovery
+# mDNS/zeroconf server discovery and advertisement
 zeroconf>=0.131.0
 
-# Configuration Management
+# Configuration file handling
 pyyaml>=6.0.1
 
-# Logging
+# Coloured console logging (optional -- the app falls back to plain logging)
 colorlog>=6.8.0
-
-# Platform Detection
-psutil>=5.9.0
-
-# Development Dependencies (optional)
-pytest>=7.4.0
-pytest-qt>=4.2.0
-black>=23.0.0
-pylint>=3.0.0
