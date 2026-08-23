@@ -6,6 +6,7 @@ import io.openusbip.server.protocol.CmdSubmit
 import io.openusbip.server.protocol.Protocol
 import io.openusbip.server.protocol.UsbipDevice
 import io.openusbip.server.protocol.UsbipInterface
+import android.util.Log
 
 /**
  * A USB mass-storage device that does not exist.
@@ -59,8 +60,21 @@ class MassStorageBackend(
     /** Bytes on the medium, for the UI. */
     val capacityBytes: Long get() = block.sizeBytes
 
-    override fun submit(cmd: CmdSubmit, outData: ByteArray?): UrbResult =
-        if (cmd.isControl) handleControl(cmd, outData) else handleBulk(cmd, outData)
+    override fun submit(cmd: CmdSubmit, outData: ByteArray?): UrbResult {
+        val result = if (cmd.isControl) handleControl(cmd, outData) else handleBulk(cmd, outData)
+        if (DEBUG) {
+            val dir = if (cmd.header.isIn) "IN " else "OUT"
+            val setup = if (cmd.isControl) cmd.setup.joinToString("") { "%02x".format(it) } else ""
+            Log.d(
+                TAG,
+                "ep${cmd.header.ep} $dir len=${cmd.transferBufferLength} $setup " +
+                    "-> status=${result.status} bytes=${result.actualLength} phase=${botPhase()}",
+            )
+        }
+        return result
+    }
+
+    private fun botPhase(): String = bot.phase.name
 
     override fun close() {
         bot.reset()
@@ -167,6 +181,9 @@ class MassStorageBackend(
         if (length in 0 until data.size) data.copyOf(length) else data
 
     companion object {
+        private const val TAG = "UsbipMsc"
+        private const val DEBUG = true
+
         /** Virtual devices live on their own bus so they cannot collide with
          *  a real one passed through from the OTG port. */
         const val VIRTUAL_BUSNUM = 99

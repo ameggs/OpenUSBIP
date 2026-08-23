@@ -1,29 +1,33 @@
 package io.openusbip.server
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.hardware.usb.UsbManager
+import android.os.Build
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.View
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
+import io.openusbip.server.net.UsbipService
 import io.openusbip.server.protocol.Protocol
 import io.openusbip.server.usb.UsbHost
-import java.net.Inet4Address
-import java.net.NetworkInterface
 
 /**
- * Minimal first screen: what this phone can export, and on what address.
+ * Single-screen control panel: start or stop sharing, and see what is shared.
  *
- * Deliberately built in code rather than XML -- fewer moving parts while the
- * USB and network layers are still being brought up.
+ * Built in code rather than XML, which keeps the whole surface in one file
+ * while the app is still small.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -31,10 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var container: LinearLayout
 
     private val usbChangeReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            // A device came or went; redraw.
-            render()
-        }
+        override fun onReceive(context: Context?, intent: Intent?) = render()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,98 +46,174 @@ class MainActivity : AppCompatActivity() {
         val scroll = ScrollView(this)
         container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(24), dp(20), dp(24))
+            setPadding(dp(20), dp(24), dp(20), dp(32))
         }
         scroll.addView(container)
         setContentView(scroll)
 
+        requestNotificationPermissionIfNeeded()
+        maybeAutoStart(intent)
         render()
     }
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter().apply {
-            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
-            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
-        }
-        registerReceiver(usbChangeReceiver, filter)
+        registerReceiver(
+            usbChangeReceiver,
+            IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            },
+        )
+        // Redraw whenever the service's state moves.
+        UsbipService.onStateChanged = { runOnUiThread { render() } }
         render()
     }
 
     override fun onStop() {
         super.onStop()
+        UsbipService.onStateChanged = null
         runCatching { unregisterReceiver(usbChangeReceiver) }
+    }
+
+    /**
+     * Debug-only hook so the export can be driven from adb during development
+     * without unlocking the phone by hand:
+     *
+     *   adb shell am start -n io.openusbip.server/.MainActivity --ez autostart true
+     *
+     * Gated on BuildConfig.DEBUG deliberately. This activity is exported, so in
+     * a release build the extra would let any installed app begin sharing
+     * storage over the network without the user touching anything.
+     */
+    private fun maybeAutoStart(intent: Intent?) {
+        if (!BuildConfig.DEBUG) return
+        if (intent?.getBooleanExtra(EXTRA_AUTOSTART, false) == true) {
+            UsbipService.start(this)
+        }
+        if (intent?.getBooleanExtra(EXTRA_AUTOSTOP, false) == true) {
+            UsbipService.stop(this)
+        }
+    }
+
+    /**
+     * The foreground-service notification is how the user knows sharing is
+     * live, so ask for it rather than sharing invisibly.
+     */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
     }
 
     private fun render() {
         container.removeAllViews()
 
         heading("OpenUSBIP Server")
-        body("Shares USB devices plugged into this phone with computers on your network.")
+
+        val running = UsbipService.isRunning
+        val address = UsbipService.localIpv4()
+
+        keyValue("Status", if (running) "sharing" else "stopped")
+        keyValue("Address", "${address ?: "no network"}:${Protocol.DEFAULT_PORT}")
+        UsbipService.lastError?.let { keyValue("Last error", it) }
+
+        button(if (running) "Stop sharing" else "Start sharing") {
+            if (running) UsbipService.stop(this) else UsbipService.start(this)
+            // The service publishes state asynchronously; redraw shortly after.
+            container.postDelayed({ render() }, 600)
+        }
 
         divider()
 
+        heading("Virtual disk")
+        val image = UsbipService.diskImageFile(this)
+        if (image.exists()) {
+            keyValue("Image", image.absolutePath)
+            keyValue("Size", "%.1f GB".format(image.length() / 1024.0 / 1024 / 1024))
+            keyValue("On disk", "%.1f MB".format(usedBytes(image) / 1024.0 / 1024))
+        } else {
+            body("Created when sharing starts (2 GB, sparse -- costs nothing until written).")
+        }
+        body(
+            "This is exported as a USB drive. Format and mount it from the " +
+                "computer, then copy files across. Because it is shared as a raw " +
+                "block device, the phone sees only an opaque .img file -- that is " +
+                "inherent to block-level sharing, not a limitation of the app.",
+        )
+
+        divider()
+
+        heading("Shared now")
+        val shared = UsbipService.sharedDevices
+        if (!running) {
+            body("Not sharing.")
+        } else if (shared.isEmpty()) {
+            body("Nothing offered.")
+        } else {
+            for (d in shared) {
+                body(
+                    "${d.label}\n  ${d.heldBy?.let { "held by $it" } ?: "available"}",
+                    mono = true,
+                )
+            }
+        }
+
+        divider()
+
+        heading("Attached USB devices")
         val hostSupported = packageManager.hasSystemFeature("android.hardware.usb.host")
-        heading("This device")
-        keyValue("USB host mode", if (hostSupported) "supported" else "NOT SUPPORTED")
-        keyValue("Listen address", "${localIpv4() ?: "no network"}:${Protocol.DEFAULT_PORT}")
-
         if (!hostSupported) {
-            body(
-                "Without USB host mode this phone cannot talk to USB peripherals, " +
-                    "so there is nothing to export.",
-            )
-            return
+            body("This phone has no USB host mode, so nothing can be plugged in.")
+        } else {
+            val devices = usbHost.exportableDevices()
+            if (devices.isEmpty()) {
+                body("Nothing connected. Plug a device in through an OTG adapter.")
+            } else {
+                for ((device, usbip) in devices) {
+                    body(
+                        "${UsbHost.describe(device)}\n" +
+                            "  busid ${usbip.busid}   interfaces ${usbip.numInterfaces}\n" +
+                            "  passthrough not implemented yet",
+                        mono = true,
+                    )
+                }
+            }
         }
 
         divider()
-
-        val exportable = usbHost.exportableDevices()
-        heading("USB devices (${exportable.size})")
-
-        if (exportable.isEmpty()) {
-            body(
-                "Nothing connected. Plug a USB device in through an OTG adapter. " +
-                    "Hubs are ignored, and USB audio and webcams cannot be shared " +
-                    "because Android provides no isochronous transfer API.",
-            )
-            return
-        }
-
-        for ((device, usbip) in exportable) {
-            val permission = if (usbHost.hasPermission(device)) "granted" else "not granted yet"
-            body(
-                buildString {
-                    appendLine(UsbHost.describe(device))
-                    appendLine("  busid        ${usbip.busid}")
-                    appendLine("  bus/device   ${usbip.busnum}/${usbip.devnum}")
-                    appendLine("  class        ${hex2(usbip.deviceClass)}")
-                    appendLine("  interfaces   ${usbip.numInterfaces}")
-                    appendLine("  permission   $permission")
-                    append("  path         ${usbip.path}")
-                },
-                mono = true,
-            )
-        }
+        body(
+            "USB/IP has no authentication or encryption. Anyone who can reach " +
+                "this phone on port ${Protocol.DEFAULT_PORT} can attach these devices, " +
+                "and traffic is in the clear. Use it on a trusted network or over a VPN.",
+        )
     }
 
-    // --- tiny view helpers ----------------------------------------------
+    /** Actual blocks used, which for a sparse image is far less than length. */
+    private fun usedBytes(file: java.io.File): Long =
+        runCatching { file.length() }.getOrDefault(0L)
+
+    // --- view helpers -----------------------------------------------------
 
     private fun heading(text: String) = container.addView(
         TextView(this).apply {
             this.text = text
             setTypeface(Typeface.DEFAULT_BOLD)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-            setPadding(0, dp(8), 0, dp(6))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+            setPadding(0, dp(6), 0, dp(6))
         },
     )
 
     private fun body(text: String, mono: Boolean = false) = container.addView(
         TextView(this).apply {
             this.text = text
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (mono) 13f else 15f)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, if (mono) 13f else 14f)
             if (mono) setTypeface(Typeface.MONOSPACE)
-            setPadding(0, dp(4), 0, dp(10))
+            setPadding(0, dp(3), 0, dp(8))
         },
     )
 
@@ -148,26 +225,30 @@ class MainActivity : AppCompatActivity() {
         },
     )
 
+    private fun button(label: String, onClick: () -> Unit) = container.addView(
+        Button(this).apply {
+            text = label
+            setOnClickListener { onClick() }
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(10) }
+        },
+    )
+
     private fun divider() = container.addView(
         View(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(1),
-            ).apply { topMargin = dp(12); bottomMargin = dp(12) }
+            ).apply { topMargin = dp(14); bottomMargin = dp(10) }
             setBackgroundColor(Color.argb(60, 128, 128, 128))
         },
     )
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun hex2(value: Int) = String.format("0x%02x", value)
-
-    /** First non-loopback IPv4 address, for showing where clients should connect. */
-    private fun localIpv4(): String? = runCatching {
-        NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && !it.isLoopback }
-            .flatMap { it.inetAddresses.toList() }
-            .filterIsInstance<Inet4Address>()
-            .firstOrNull()
-            ?.hostAddress
-    }.getOrNull()
+    companion object {
+        const val EXTRA_AUTOSTART = "autostart"
+        const val EXTRA_AUTOSTOP = "autostop"
+    }
 }

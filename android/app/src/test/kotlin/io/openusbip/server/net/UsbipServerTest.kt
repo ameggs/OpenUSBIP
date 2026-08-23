@@ -462,4 +462,47 @@ class UsbipServerTest {
             assertEquals(50, reply.int)
         }
     }
+
+    // --- actual_length on OUT transfers -----------------------------------
+
+    @Test
+    fun `an OUT transfer reports the bytes accepted, not zero`() {
+        // Found on real hardware. The backend answers OK with no data, so
+        // result.actualLength is 0; reporting that told the kernel only 0 of 31
+        // bytes were written. usb-storage read the CBW as truncated and reset
+        // the device in a loop, and enumeration never completed.
+        registry.add(FakeBackend())
+        server.start()
+
+        val payload = ByteArray(31) { it.toByte() }
+        connect().use { socket ->
+            importAndGetStreams(socket)
+            val out = socket.getOutputStream()
+            out.write(submitHeader(1, Protocol.DIR_OUT, ep = 2, length = payload.size))
+            out.write(payload)
+            out.flush()
+
+            val (_, status, actual) = readRetSubmit(socket.getInputStream())
+            assertEquals(0, status)
+            assertEquals("must report the full write", payload.size, actual)
+        }
+    }
+
+    @Test
+    fun `a failed OUT transfer reports zero bytes moved`() {
+        registry.add(FakeBackend { _, _ -> UrbResult.stall() })
+        server.start()
+
+        connect().use { socket ->
+            importAndGetStreams(socket)
+            val out = socket.getOutputStream()
+            out.write(submitHeader(1, Protocol.DIR_OUT, ep = 2, length = 16))
+            out.write(ByteArray(16))
+            out.flush()
+
+            val (_, status, actual) = readRetSubmit(socket.getInputStream())
+            assertTrue(status != 0)
+            assertEquals(0, actual)
+        }
+    }
 }

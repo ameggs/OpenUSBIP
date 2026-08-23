@@ -110,8 +110,10 @@ class UsbipServer(
                     runOpPhase(client, input, output)
                 }
             }
+        } catch (e: java.io.EOFException) {
+            // A client that connects and closes without sending is routine --
+            // usbip probes this way. Not worth surfacing as an error.
         } catch (e: Exception) {
-            // A client vanishing mid-stream is routine, not exceptional.
             if (running.get()) listener.onError("session $client", e)
         } finally {
             registry.releaseAll(client)
@@ -262,13 +264,25 @@ class UsbipServer(
             null
         }
 
+        // actual_length is how many bytes actually moved. For OUT that is the
+        // payload we accepted, NOT whatever the backend chose to return: a
+        // backend answering "OK" with no data would otherwise report a
+        // zero-length write, which the client reads as a short transfer. That
+        // is fatal for Bulk-Only Transport -- usb-storage sees a truncated CBW,
+        // gives up on the command and resets the device in a loop.
+        val actual = when {
+            cmd.header.isIn -> payload?.size ?: 0
+            result.status != 0 -> 0
+            else -> outData?.size ?: 0
+        }
+
         val ret = RetSubmit(
             seqnum = cmd.header.seqnum,
             devid = cmd.header.devid,
             direction = cmd.header.direction,
             ep = cmd.header.ep,
             status = result.status,
-            actualLength = if (cmd.header.isIn) (payload?.size ?: 0) else result.actualLength,
+            actualLength = actual,
         )
 
         output.write(ret.encode())

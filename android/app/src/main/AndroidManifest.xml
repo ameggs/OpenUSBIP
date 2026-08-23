@@ -10,6 +10,10 @@
          mid-transfer while a client has a device attached. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- dataSync rather than connectedDevice: the connectedDevice type requires
+         a qualifying connection to already exist, and the virtual disk is
+         shared with nothing plugged in. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- USB host mode. Not every phone supports it; declare it non-required so
@@ -39,7 +43,9 @@
                 android:resource="@xml/usb_device_filter" />
         </activity>
 
-        <!-- The export service is declared once UsbipService exists; see
-             android/README.md for the build-out order. -->
+        <service
+            android:name=".net.UsbipService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
