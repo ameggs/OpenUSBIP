@@ -41,6 +41,11 @@ class Worker(QRunnable):
         self.kwargs = kwargs
         self.signals = WorkerSignals()
 
+        # Python owns this object's lifetime, not Qt. With Qt's default
+        # auto-delete the C++ half is freed the moment run() returns, leaving
+        # the Python wrapper pointing at freed memory.
+        self.setAutoDelete(False)
+
     def _emit(self, signal, *args):
         """
         Emit defensively.
@@ -57,6 +62,17 @@ class Worker(QRunnable):
 
     @Slot()
     def run(self):
+        """
+        Execute the callable on a pool thread.
+
+        Nothing here may drop the last reference to this Worker. The emits
+        below are cross-thread and therefore queued: the slots have not run
+        yet when run() returns. Releasing the Worker at that point lets Python
+        destroy its WorkerSignals from the pool thread while the main thread
+        still holds queued events referencing it, which segfaults. Cleanup is
+        instead driven by the finished signal, on the main thread -- see
+        run_async().
+        """
         try:
             output = self.fn(*self.args, **self.kwargs)
         except Exception as exc:  # noqa: BLE001 - must not kill the pool thread
@@ -66,7 +82,6 @@ class Worker(QRunnable):
             self._emit(self.signals.result, output)
         finally:
             self._emit(self.signals.finished)
-            _INFLIGHT.discard(self)
 
 
 def run_async(fn, *args, on_result=None, on_error=None, on_finished=None, **kwargs):
@@ -78,12 +93,20 @@ def run_async(fn, *args, on_result=None, on_error=None, on_finished=None, **kwar
     """
     worker = Worker(fn, *args, **kwargs)
     _INFLIGHT.add(worker)
+
     if on_result is not None:
         worker.signals.result.connect(on_result)
     if on_error is not None:
         worker.signals.error.connect(on_error)
     if on_finished is not None:
         worker.signals.finished.connect(on_finished)
+
+    # Release the worker only once `finished` has actually been delivered.
+    # This slot runs on the thread that owns the signals object (the caller,
+    # i.e. the GUI thread), so the WorkerSignals QObject is destroyed there
+    # rather than on a pool thread with deliveries still queued.
+    worker.signals.finished.connect(lambda w=worker: _INFLIGHT.discard(w))
+
     QThreadPool.globalInstance().start(worker)
     return worker
 

@@ -174,15 +174,28 @@ class ServerListWidget(QWidget):
         return icons.get(server_type, "❓")
 
     def on_server_clicked(self, item: QListWidgetItem):
-        """Handle server click"""
+        """
+        Handle server click.
+
+        A single click selects the server and loads its devices. Requiring a
+        double-click was not discoverable -- the device panel just sat on
+        "Select a server to view devices" while a server was plainly
+        highlighted, which reads as the server having no devices.
+        """
         server = item.data(Qt.UserRole)
         if server:
             self.remove_btn.setEnabled(True)
             logger.debug(f"Server clicked: {server.name}")
+            self.select_server(server)
 
     def on_server_double_clicked(self, item: QListWidgetItem):
-        """Handle server double-click (select and load devices)"""
+        """Handle server double-click (same as single click)"""
         server = item.data(Qt.UserRole)
+        if server:
+            self.select_server(server)
+
+    def select_server(self, server: USBIPServer):
+        """Select a server and load its devices, probing it first if needed."""
         if server:
             logger.info(f"Server selected: {server.name}")
 
