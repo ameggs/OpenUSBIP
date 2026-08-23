@@ -3,11 +3,24 @@
 # OpenUSBIP Server - One-Command Installer
 # For Raspberry Pi and Linux SBCs
 #
-# Usage: curl -sSL https://your-url/install-server.sh | bash
-# Or: wget -qO- https://your-url/install-server.sh | bash
+# Usage: curl -sSL https://raw.githubusercontent.com/ameggs/OpenUSBIP/main/install-server.sh | bash
+# Or: wget -qO- https://raw.githubusercontent.com/ameggs/OpenUSBIP/main/install-server.sh | bash
 #
 
 set -e
+
+# Resolve where this script lives BEFORE anything changes directory. Doing it
+# later is a trap: BASH_SOURCE[0] is often relative ("./install-server.sh"), so
+# after `cd "$INSTALL_DIR"` it resolves to the install directory instead of the
+# source checkout -- which silently made the installer clone from GitHub and
+# install stale code over the local tree.
+SCRIPT_SRC=""
+if [ -n "${BASH_SOURCE[0]:-}" ] && [ -f "${BASH_SOURCE[0]}" ]; then
+    _candidate="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$_candidate/openusbip_server.py" ] && [ -d "$_candidate/src" ]; then
+        SCRIPT_SRC="$_candidate"
+    fi
+fi
 
 echo "╔══════════════════════════════════════════════════════════════╗"
 echo "║                                                              ║"
@@ -27,7 +40,7 @@ fi
 # Detect platform
 echo "🔍 Detecting platform..."
 if [ -f /proc/device-tree/model ]; then
-    MODEL=$(cat /proc/device-tree/model)
+    MODEL=$(tr -d "\0" < /proc/device-tree/model)
     echo "   Detected: $MODEL"
 else
     echo "   Detected: $(uname -m) Linux"
@@ -46,12 +59,65 @@ echo ""
 echo "   Updating package list..."
 sudo apt-get update -qq
 
-# Install required packages
+# Install required packages.
+#
+# Package names differ by distro and requesting one that does not exist aborts
+# the whole apt run: Debian/Raspberry Pi OS ship `usbip`, while Ubuntu/Zorin
+# have no such package and put the binary in linux-tools-common. Offer both and
+# install whichever actually exists, then verify the binary rather than
+# trusting package names.
+#
+# Prefer distro Python packages over pip: Debian 12+ marks the environment
+# externally managed (PEP 668), so `pip install` needs --break-system-packages
+# and fights the package manager. python3-zeroconf is the same library.
 echo "   Installing USB/IP tools..."
-sudo apt-get install -y usbip avahi-daemon python3 python3-pip > /dev/null 2>&1
+APT_LOG="$(mktemp)"
 
-echo "   Installing Python packages..."
-pip3 install --user --break-system-packages zeroconf > /dev/null 2>&1 || pip3 install --user zeroconf > /dev/null 2>&1
+install_apt_packages() {
+    local pkgs=()
+    local candidate
+
+    for candidate in usbip linux-tools-common "linux-tools-$(uname -r)" \
+                     linux-tools-generic avahi-daemon avahi-utils python3 \
+                     python3-zeroconf python3-colorlog; do
+        if apt-cache policy "$candidate" 2>/dev/null | grep -q 'Candidate: [^(]'; then
+            pkgs+=("$candidate")
+        else
+            echo "   note: skipping unavailable package '$candidate'"
+        fi
+    done
+
+    if [ ${#pkgs[@]} -eq 0 ]; then
+        echo "   ⚠️  No installable packages found; relying on what is present."
+        return 0
+    fi
+
+    if ! sudo apt-get install -y "${pkgs[@]}" > "$APT_LOG" 2>&1; then
+        echo "❌ ERROR: apt failed to install: ${pkgs[*]}"
+        echo "   ---- apt output ----"
+        tail -20 "$APT_LOG" | sed 's/^/   /'
+        rm -f "$APT_LOG"
+        exit 1
+    fi
+}
+
+install_apt_packages
+rm -f "$APT_LOG"
+
+# Fall back to pip only if the distro package did not supply zeroconf.
+if ! python3 -c "import zeroconf" 2>/dev/null; then
+    echo "   Installing zeroconf via pip (no distro package available)..."
+    PIP_LOG="$(mktemp)"
+    if ! pip3 install --user --break-system-packages zeroconf > "$PIP_LOG" 2>&1; then
+        pip3 install --user zeroconf >> "$PIP_LOG" 2>&1 || true
+    fi
+    if ! python3 -c "import zeroconf" 2>/dev/null; then
+        echo "   ⚠️  zeroconf unavailable - mDNS auto-discovery will be disabled."
+        echo "      Clients can still add this server manually by IP."
+        tail -5 "$PIP_LOG" | sed 's/^/      /'
+    fi
+    rm -f "$PIP_LOG"
+fi
 
 echo ""
 echo "✅ Dependencies installed!"
@@ -64,119 +130,38 @@ echo "📁 Installing to: $INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# Download server script
-echo "⬇️  Downloading server script..."
-cat > openusbip_server.py << 'SERVERSCRIPT'
-#!/usr/bin/env python3
-"""
-OpenUSBIP Server - Simple USB/IP Server with mDNS
-"""
-import socket
-import subprocess
-import time
+# Install the real application.
+#
+# This previously wrote a simplified inline copy of the server via a heredoc,
+# which then drifted from the actual openusbip_server.py in the repository --
+# the systemd unit ran the inline copy, so fixes to the real one never took
+# effect. Install the repository itself instead.
+echo "⬇️  Installing OpenUSBIP..."
 
-def get_local_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
-        return "127.0.0.1"
+if [ -n "$SCRIPT_SRC" ]; then
+    echo "   Installing from local checkout: $SCRIPT_SRC"
+    cp -r "$SCRIPT_SRC/openusbip_server.py" "$SCRIPT_SRC/src" "$INSTALL_DIR/"
+    [ -f "$SCRIPT_SRC/requirements.txt" ] && cp "$SCRIPT_SRC/requirements.txt" "$INSTALL_DIR/"
+else
+    echo "   Fetching from GitHub..."
+    if ! command -v git > /dev/null 2>&1; then
+        sudo apt-get install -y git > /dev/null 2>&1
+    fi
+    TMP_CLONE="$(mktemp -d)"
+    git clone --depth 1 https://github.com/ameggs/OpenUSBIP.git "$TMP_CLONE/repo" > /dev/null 2>&1
+    cp -r "$TMP_CLONE/repo/openusbip_server.py" "$TMP_CLONE/repo/src" "$INSTALL_DIR/"
+    [ -f "$TMP_CLONE/repo/requirements.txt" ] && cp "$TMP_CLONE/repo/requirements.txt" "$INSTALL_DIR/"
+    rm -rf "$TMP_CLONE"
+fi
 
-def main():
-    print("=" * 60)
-    print("OpenUSBIP Server - Raspberry Pi")
-    print("=" * 60)
-    
-    hostname = socket.gethostname()
-    ip = get_local_ip()
-    
-    print(f"\nServer Info:")
-    print(f"  Hostname: {hostname}")
-    print(f"  IP: {ip}")
-    print(f"  Port: 3240")
-    
-    # Check if usbipd is running
-    try:
-        result = subprocess.run(["pgrep", "-x", "usbipd"], capture_output=True)
-        if result.returncode == 0:
-            print(f"\n✅ usbipd is running")
-        else:
-            print(f"\n❌ usbipd is NOT running")
-            print("Starting usbipd...")
-            subprocess.run(["sudo", "usbipd", "-D"])
-            time.sleep(1)
-            print("✅ usbipd started")
-    except Exception as e:
-        print(f"Error: {e}")
-    
-    # List USB devices
-    print(f"\n{'=' * 60}")
-    print("Available USB Devices:")
-    print("=" * 60)
-    
-    try:
-        result = subprocess.run(["/usr/sbin/usbip", "list", "-l"], 
-                              capture_output=True, text=True)
-        print(result.stdout)
-    except Exception as e:
-        print(f"Error listing devices: {e}")
-    
-    # Advertise via mDNS
-    print(f"\n{'=' * 60}")
-    print("mDNS Advertisement:")
-    print("=" * 60)
-    
-    try:
-        from zeroconf import ServiceInfo, Zeroconf
-        
-        info = ServiceInfo(
-            "_usbip._tcp.local.",
-            f"{hostname}._usbip._tcp.local.",
-            addresses=[socket.inet_aton(ip)],
-            port=3240,
-            properties={
-                'type': b'raspberry-pi',
-                'version': b'1.0'
-            },
-            server=f"{hostname}.local."
-        )
-        
-        zeroconf = Zeroconf()
-        zeroconf.register_service(info)
-        
-        print(f"✅ Server advertised as: {hostname}")
-        print(f"   Clients can auto-discover this server!")
-        print(f"\nPress Ctrl+C to stop...")
-        
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\n\nStopping...")
-            zeroconf.close()
-            print("✅ Server stopped")
-    
-    except ImportError:
-        print("❌ zeroconf not installed - no auto-discovery")
-        print(f"   Clients must add server manually:")
-        print(f"   IP: {ip}, Port: 3240")
-        print("\nServer is ready! Press Ctrl+C to stop...")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            print("\nStopped")
+if [ ! -f "$INSTALL_DIR/openusbip_server.py" ] || [ ! -d "$INSTALL_DIR/src" ]; then
+    echo "❌ ERROR: installation failed - openusbip_server.py or src/ is missing."
+    exit 1
+fi
 
-if __name__ == "__main__":
-    main()
-SERVERSCRIPT
+chmod +x "$INSTALL_DIR/openusbip_server.py"
 
-chmod +x openusbip_server.py
-
-echo "✅ Server script installed!"
+echo "✅ Server installed!"
 echo ""
 
 # Load kernel modules
@@ -198,14 +183,34 @@ echo ""
 # Create systemd service for usbipd
 echo "⚙️  Creating systemd services..."
 
-sudo tee /etc/systemd/system/usbipd.service > /dev/null << 'USBIPD_SERVICE'
+# Locate usbipd. Its path varies by distro: /usr/sbin on some Debian builds,
+# /usr/bin on Ubuntu/Zorin, and under /usr/lib/linux-tools/<ver>/ when it
+# comes from linux-tools-generic. Never hardcode it.
+USBIPD_BIN="$(command -v usbipd 2>/dev/null || true)"
+if [ -z "$USBIPD_BIN" ]; then
+    for candidate in /usr/sbin/usbipd /usr/bin/usbipd /usr/lib/linux-tools/*/usbipd; do
+        if [ -x "$candidate" ]; then
+            USBIPD_BIN="$candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "$USBIPD_BIN" ]; then
+    echo "❌ ERROR: could not locate the 'usbipd' binary."
+    echo "   Install it first (Debian/Ubuntu: sudo apt install linux-tools-generic)."
+    exit 1
+fi
+echo "   Found usbipd at: $USBIPD_BIN"
+
+sudo tee /etc/systemd/system/usbipd.service > /dev/null << USBIPD_SERVICE
 [Unit]
 Description=USB/IP Daemon
 After=network.target
 
 [Service]
 Type=forking
-ExecStart=/usr/sbin/usbipd -D
+ExecStart=$USBIPD_BIN -D
 Restart=always
 RestartSec=5
 
@@ -224,7 +229,7 @@ Wants=usbipd.service
 Type=simple
 User=$USER
 WorkingDirectory=$HOME
-ExecStart=/usr/bin/python3 $INSTALL_DIR/openusbip_server.py
+ExecStart=/usr/bin/python3 $INSTALL_DIR/openusbip_server.py --daemon
 Restart=always
 RestartSec=10
 
@@ -235,23 +240,51 @@ OPENUSBIP_SERVICE
 # Create auto-bind script
 cat > "$INSTALL_DIR/bind-usb-devices.sh" << 'BINDSCRIPT'
 #!/bin/bash
-# Auto-bind USB devices for sharing
+# Auto-bind USB devices for sharing.
+#
+# Hubs are excluded by USB device class (09 = hub), not by a vendor blocklist.
+# The old filter only skipped vendors 1d6b and 0424, so it attempted to bind
+# any third-party hub (VIA Labs 2109, Realtek 0bda, ...). usbip refuses those,
+# but binding a hub would detach everything downstream of it.
+#
+# The usbip binary lives in /usr/sbin on Debian and /usr/bin on Ubuntu, so
+# resolve it at runtime instead of hardcoding either.
 
 sleep 5
 
-# Bind all non-hub USB devices
-for device in /sys/bus/usb/drivers/usb/*; do
-    if [ -e "$device/idVendor" ]; then
-        vendor=$(cat "$device/idVendor")
-        # Skip hubs and built-in devices
-        if [ "$vendor" != "1d6b" ] && [ "$vendor" != "0424" ]; then
-            busid=$(basename "$device")
-            /usr/sbin/usbip bind -b "$busid" 2>/dev/null || true
-        fi
+USBIP_BIN="$(command -v usbip 2>/dev/null || true)"
+if [ -z "$USBIP_BIN" ]; then
+    for candidate in /usr/sbin/usbip /usr/bin/usbip /usr/lib/linux-tools/*/usbip; do
+        [ -x "$candidate" ] && USBIP_BIN="$candidate" && break
+    done
+fi
+
+if [ -z "$USBIP_BIN" ]; then
+    logger "OpenUSBIP: usbip binary not found; nothing bound"
+    exit 0
+fi
+
+bound=0
+for device in /sys/bus/usb/devices/*/; do
+    [ -f "$device/idVendor" ] || continue
+
+    # Only real interfaces-level devices have a bDeviceClass file.
+    class="$(cat "$device/bDeviceClass" 2>/dev/null || echo '')"
+    [ "$class" = "09" ] && continue          # hub
+    [ -z "$class" ] && continue              # interface node, not a device
+
+    busid="$(basename "$device")"
+    case "$busid" in
+        usb*) continue ;;                    # root hub controller
+    esac
+
+    if "$USBIP_BIN" bind -b "$busid" 2>/dev/null; then
+        logger "OpenUSBIP: bound $busid"
+        bound=$((bound + 1))
     fi
 done
 
-logger "OpenUSBIP: USB devices bound"
+logger "OpenUSBIP: auto-bind complete, $bound device(s) bound"
 BINDSCRIPT
 
 chmod +x "$INSTALL_DIR/bind-usb-devices.sh"
@@ -319,8 +352,15 @@ echo ""
 sudo systemctl status openusbip-server.service --no-pager -l | head -5
 echo ""
 
-# Get IP
-IP=$(get_local_ip)
+# Get IP. `hostname -I` lists every address, so take the first non-loopback
+# one; fall back to the route lookup. (This previously called get_local_ip,
+# a Python function that only ever existed inside the removed heredoc, so the
+# script errored out here with "command not found".)
+IP="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(127\.|::1|$)' | head -1)"
+if [ -z "$IP" ]; then
+    IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)"
+fi
+[ -z "$IP" ] && IP="(could not determine)"
 HOSTNAME=$(hostname)
 
 echo "╔══════════════════════════════════════════════════════════════╗"

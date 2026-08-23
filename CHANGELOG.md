@@ -2,6 +2,65 @@
 
 All notable changes to OpenUSBIP will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- **Server entry point crashed on every run.** `openusbip_server.py` put `src/`
+  on `sys.path`, making `core` a top-level package, while `usbip_wrapper.py`
+  used `from ..utils` to reach above it — every invocation died with
+  "attempted relative import beyond top-level package".
+- **`install-server.sh` installed a divergent inline copy of the server.** It
+  wrote a simplified `openusbip_server.py` via heredoc and pointed the systemd
+  unit at that, so fixes to the real server never took effect. It now installs
+  the repository.
+- **`usbipd` path was hardcoded to `/usr/sbin/usbipd`**, which does not exist on
+  Ubuntu/Zorin (`/usr/bin/usbipd`). Located at install time instead.
+- **The server prompted for input under systemd**, raising `EOFError`
+  immediately. Prompting is now gated on `stdin.isatty()`, with `--daemon`.
+- **Tray Quit and File → Exit could never exit.** Both called `self.close()`,
+  which `closeEvent` turned into minimise-to-tray.
+- **Custom ports were silently ignored.** `port` was accepted by
+  `list_remote_devices()` and `attach_device()` and dropped; `usbip` takes
+  `--tcp-port` as a global option, so it now precedes the subcommand.
+- **The GUI froze for up to 15 seconds** on an unreachable server. All usbip
+  calls and socket probes now run on a `QThreadPool`.
+- **The 5-second refresh wiped the user's selection** by rebuilding both lists
+  wholesale. Selection is preserved across rebuilds.
+- **Linux `list_local_devices()` returned empty** when `usbipd` was absent, even
+  though it runs `usbip`.
+- **`sudo` could deadlock**: bare `sudo` with piped stdin blocked on the password
+  prompt until timeout. Uses `sudo -n` and explains the failure.
+- Local device descriptions repeated their `(vid:pid)` suffix.
+- Selecting a server issued two identical `usbip list -r` calls.
+- `LICENSE` contained only the GPL-3.0 notice, not the license text required for
+  distribution. Full text added; the project notice moved to `NOTICE`.
+
+### Added
+
+- `ConfigManager` is now actually wired in — manually added servers, auto-attach
+  entries, and window geometry persist across restarts. It was 255 lines of
+  working but entirely unimported code.
+- `tests/` with 24 tests covering the output parsers, the `--tcp-port`
+  regression, and import health.
+- GitHub Actions CI: pytest on Python 3.10/3.12, ruff, byte-compile, installer
+  syntax checks.
+- `pyproject.toml`; `requirements-dev.txt` split out from runtime deps.
+- A Security section in the README documenting that USB/IP is unauthenticated
+  and unencrypted.
+- Authenticode verification of the Python installer downloaded by the Windows
+  installers.
+
+### Changed
+
+- Consolidated 12 overlapping installer scripts into 4. The removed
+  `install-linux-client.sh` never installed the application at all — its
+  download line was commented out — and several contained unreplaced
+  `yourusername` / `your-url` placeholders that 404'd.
+- Removed dead code: `MainWindow.server_selected` (never emitted),
+  `ServerDiscovery.scan_network()` (a stub), and the `psutil` dependency
+  (never imported).
+
 ## [0.1.0] - 2025-11-26
 
 ### 🎉 Initial Release - Fully Functional USB/IP Solution

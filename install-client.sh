@@ -4,7 +4,8 @@
 # For Linux Desktop/Laptop
 #
 # Usage: sudo ./install-client.sh
-# Or: curl -sSL https://your-url/install-client.sh | bash
+# Must be run from a checkout (it launches the client from the repo directory):
+#   git clone https://github.com/ameggs/OpenUSBIP.git && cd OpenUSBIP && ./install-client.sh
 #
 
 set -e
@@ -54,23 +55,84 @@ elif command -v pacman &> /dev/null; then
     sudo pacman -Sy --noconfirm
 fi
 
-# Install required packages
+# Install required packages.
+#
+# There is no "usbip" package on Ubuntu/Zorin -- the binary ships in
+# linux-tools-common, with the kernel-specific implementation in
+# linux-tools-<version>. Requiring a package named "usbip" made apt fail with
+# "no installation candidate", and because the output was redirected to
+# /dev/null the script died under `set -e` with nothing on screen.
+#
+# Install only packages that exist, and verify the binary afterwards rather
+# than trusting package names across distros.
 echo "   Installing USB/IP tools..."
+APT_LOG="$(mktemp)"
+
+install_apt_packages() {
+    local pkgs=()
+    local candidate
+
+    # The libxcb-*/libxkbcommon-x11 set is not optional: from Qt 6.5 the xcb
+    # platform plugin refuses to load without libxcb-cursor0, and PySide6 then
+    # aborts with "no Qt platform plugin could be initialized" even though the
+    # plugin file is present. The client is a GUI, so these are hard deps.
+    # `usbip` exists on Debian/Raspberry Pi OS but not on Ubuntu/Zorin, where the
+    # binary comes from linux-tools-common instead. Offer both; the filter keeps
+    # whichever the running distro actually has.
+    for candidate in usbip linux-tools-common "linux-tools-$(uname -r)" \
+                     linux-tools-generic avahi-utils python3 python3-pip \
+                     python3-zeroconf python3-yaml python3-colorlog \
+                     libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
+                     libxcb-xinerama0 libxkbcommon-x11-0 libegl1 libgl1 libdbus-1-3; do
+        if apt-cache policy "$candidate" 2>/dev/null | grep -q 'Candidate: [^(]'; then
+            pkgs+=("$candidate")
+        else
+            echo "   note: skipping unavailable package '$candidate'"
+        fi
+    done
+
+    if [ ${#pkgs[@]} -eq 0 ]; then
+        echo "   ⚠️  No installable packages found; relying on what is already present."
+        return 0
+    fi
+
+    if ! sudo apt-get install -y "${pkgs[@]}" > "$APT_LOG" 2>&1; then
+        echo "❌ ERROR: apt failed to install: ${pkgs[*]}"
+        echo "   ---- apt output ----"
+        tail -20 "$APT_LOG" | sed 's/^/   /'
+        rm -f "$APT_LOG"
+        exit 1
+    fi
+}
+
 if command -v apt-get &> /dev/null; then
-    # Debian/Ubuntu/Pop!_OS
-    sudo apt-get install -y linux-tools-generic usbip avahi-utils python3 python3-pip > /dev/null 2>&1 || \
-    sudo apt-get install -y usbip avahi-utils python3 python3-pip > /dev/null 2>&1
+    install_apt_packages
 elif command -v dnf &> /dev/null; then
-    # Fedora/RHEL
-    sudo dnf install -y usbip-utils avahi-tools python3 python3-pip > /dev/null 2>&1
+    if ! sudo dnf install -y usbip-utils avahi-tools python3 python3-pip > "$APT_LOG" 2>&1; then
+        echo "❌ ERROR: dnf install failed:"; tail -20 "$APT_LOG" | sed 's/^/   /'; exit 1
+    fi
 elif command -v pacman &> /dev/null; then
-    # Arch
-    sudo pacman -S --noconfirm usbip avahi python python-pip > /dev/null 2>&1
+    if ! sudo pacman -S --noconfirm usbip avahi python python-pip > "$APT_LOG" 2>&1; then
+        echo "❌ ERROR: pacman install failed:"; tail -20 "$APT_LOG" | sed 's/^/   /'; exit 1
+    fi
 fi
+rm -f "$APT_LOG"
 
 echo "   Installing Python packages..."
-pip3 install --user --break-system-packages PySide6 zeroconf > /dev/null 2>&1 || \
-pip3 install --user PySide6 zeroconf > /dev/null 2>&1
+PIP_LOG="$(mktemp)"
+if ! pip3 install --user --break-system-packages PySide6 zeroconf pyyaml colorlog > "$PIP_LOG" 2>&1; then
+    if ! pip3 install --user PySide6 zeroconf pyyaml colorlog >> "$PIP_LOG" 2>&1; then
+        # Already satisfied system-wide is fine; a real failure is not.
+        if ! python3 -c "import PySide6, zeroconf" 2>/dev/null; then
+            echo "❌ ERROR: could not install the Python dependencies:"
+            tail -20 "$PIP_LOG" | sed 's/^/   /'
+            rm -f "$PIP_LOG"
+            exit 1
+        fi
+        echo "   note: pip reported an error but the imports resolve; continuing."
+    fi
+fi
+rm -f "$PIP_LOG"
 
 echo ""
 echo "✅ Dependencies installed!"
@@ -142,8 +204,23 @@ echo "vhci_hcd" | sudo tee /etc/modules-load.d/usbip.conf > /dev/null
 echo "✅ Kernel modules configured!"
 echo ""
 
-# Get current directory (where the repo is)
+# Get current directory (where the repo is). This installer wires the desktop
+# launcher to the checkout, so it cannot run standalone via curl | bash.
+if [ -z "${BASH_SOURCE[0]:-}" ] || [ ! -f "${BASH_SOURCE[0]}" ]; then
+    echo "❌ ERROR: this installer must be run from a checkout, not piped from curl."
+    echo "   git clone https://github.com/ameggs/OpenUSBIP.git"
+    echo "   cd OpenUSBIP && ./install-client.sh"
+    exit 1
+fi
+
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ ! -f "$REPO_DIR/openusbip_client.py" ]; then
+    echo "❌ ERROR: openusbip_client.py not found in $REPO_DIR"
+    echo "   Run this script from inside the OpenUSBIP checkout."
+    exit 1
+fi
+
 echo "📁 Repository location: $REPO_DIR"
 echo ""
 
@@ -162,7 +239,7 @@ Comment=Connect to remote USB devices over network
 Exec=python3 "$REPO_DIR/openusbip_client.py"
 Icon=$REPO_DIR/resources/icons/openusbip.svg
 Terminal=false
-Categories=Network;Utility;
+Categories=Network;RemoteAccess;
 Keywords=usb;network;remote;
 StartupNotify=true
 DESKTOP
@@ -191,6 +268,29 @@ if sudo -n "$USBIP_PATH" version > /dev/null 2>&1; then
 else
     echo "⚠️  Warning: Passwordless sudo test failed"
     echo "   You may need to log out and back in"
+fi
+echo ""
+
+# Verify the GUI toolkit can actually initialise. Catching this here is the
+# difference between a clear message now and "no Qt platform plugin could be
+# initialized" the first time the user double-clicks the launcher.
+echo "🧪 Testing GUI toolkit..."
+QT_SMOKE="$(cd "$REPO_DIR" && QT_QPA_PLATFORM=offscreen python3 -c '
+import sys
+from PySide6.QtWidgets import QApplication
+app = QApplication(sys.argv)
+print("ok")
+' 2>&1)"
+
+if [ "${QT_SMOKE##*$'\n'}" = "ok" ]; then
+    echo "✅ Qt/PySide6 initialises correctly!"
+else
+    echo "❌ ERROR: PySide6 could not start."
+    echo "$QT_SMOKE" | tail -6 | sed 's/^/   /'
+    echo ""
+    echo "   Most often a missing X11 library. Try:"
+    echo "     sudo apt-get install -y libxcb-cursor0 libxkbcommon-x11-0 libegl1 libgl1"
+    exit 1
 fi
 echo ""
 
