@@ -76,8 +76,12 @@ install_apt_packages() {
     # platform plugin refuses to load without libxcb-cursor0, and PySide6 then
     # aborts with "no Qt platform plugin could be initialized" even though the
     # plugin file is present. The client is a GUI, so these are hard deps.
-    for candidate in linux-tools-common "linux-tools-$(uname -r)" linux-tools-generic \
-                     avahi-utils python3 python3-pip \
+    # `usbip` exists on Debian/Raspberry Pi OS but not on Ubuntu/Zorin, where the
+    # binary comes from linux-tools-common instead. Offer both; the filter keeps
+    # whichever the running distro actually has.
+    for candidate in usbip linux-tools-common "linux-tools-$(uname -r)" \
+                     linux-tools-generic avahi-utils python3 python3-pip \
+                     python3-zeroconf python3-yaml python3-colorlog \
                      libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 \
                      libxcb-xinerama0 libxkbcommon-x11-0 libegl1 libgl1 libdbus-1-3; do
         if apt-cache policy "$candidate" 2>/dev/null | grep -q 'Candidate: [^(]'; then
