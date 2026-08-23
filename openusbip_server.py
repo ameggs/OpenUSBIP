@@ -82,7 +82,7 @@ def main(argv=None):
 
     # Check kernel modules (Linux only)
     if platform.value == "linux":
-        loaded, missing = check_kernel_modules()
+        loaded, missing = check_kernel_modules(role="server")
         if not loaded:
             logger.warning(f"Missing kernel modules: {', '.join(missing)}")
             print(f"\nWARNING: Missing kernel modules: {', '.join(missing)}")

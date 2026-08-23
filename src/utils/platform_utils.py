@@ -86,15 +86,31 @@ def check_usbip_installed() -> tuple[bool, str]:
     return False, f"Platform {current_platform.value} not fully supported yet"
 
 
-def check_kernel_modules() -> tuple[bool, list[str]]:
+# Which kernel module each role actually needs. A client attaches remote
+# devices through the virtual host controller (vhci_hcd); a server exports
+# local ones via usbip_host. Requiring both of every role made the client load
+# a server-side module it never uses.
+ROLE_MODULES = {
+    "client": ["vhci_hcd"],
+    "server": ["usbip_host"],
+    "both": ["vhci_hcd", "usbip_host"],
+}
+
+
+def check_kernel_modules(role: str = "both") -> tuple[bool, list[str]]:
     """
-    Check if required kernel modules are loaded (Linux only)
+    Check if the kernel modules required for `role` are loaded (Linux only).
+
+    Args:
+        role: "client", "server", or "both" (default, for backwards
+              compatibility with callers that do not specify one).
+
     Returns: (all_loaded, missing_modules)
     """
     if get_platform() != Platform.LINUX:
         return True, []
 
-    required_modules = ["vhci_hcd", "usbip_host"]
+    required_modules = ROLE_MODULES.get(role, ROLE_MODULES["both"])
     missing = []
 
     try:
