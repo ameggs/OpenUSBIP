@@ -339,8 +339,12 @@ class USBIPWrapper:
         devices = []
 
         # Run: usbip port
+        # `usbip port` reads the vhci driver state and needs root: without it
+        # the tool prints "libusbip: error: fopen" to stderr and produces empty
+        # output, so this returned [] and the GUI's attached-device table was
+        # permanently empty -- leaving no way to detach anything from the UI.
         cmd = [self._usbip_cmd, "port"]  # type: ignore
-        returncode, stdout, stderr = run_command(cmd, timeout=10)
+        returncode, stdout, stderr = run_command(cmd, timeout=10, require_admin=True)
 
         if returncode != 0:
             logger.error(f"Failed to list attached devices: {stderr}")

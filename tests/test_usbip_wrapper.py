@@ -62,10 +62,12 @@ def wrapper(monkeypatch):
     return USBIPWrapper()
 
 
-def _stub_run(monkeypatch, stdout, recorder=None, returncode=0):
+def _stub_run(monkeypatch, stdout, recorder=None, returncode=0, admin_recorder=None):
     def fake_run(cmd, timeout=10, require_admin=False):
         if recorder is not None:
             recorder.append(cmd)
+        if admin_recorder is not None:
+            admin_recorder.append(require_admin)
         return returncode, stdout, ""
 
     monkeypatch.setattr("src.core.usbip_wrapper.run_command", fake_run)
@@ -218,3 +220,37 @@ def test_missing_binary_is_reported_not_crashed(monkeypatch):
 def test_device_display_name():
     d = USBDevice("1-1", "046d", "c52b", "Unifying Receiver", DeviceState.AVAILABLE)
     assert d.display_name == "Unifying Receiver [1-1]"
+
+
+# --- privilege requirements ------------------------------------------------
+
+
+def test_list_attached_asks_for_root(wrapper, monkeypatch):
+    """Regression: `usbip port` reads the vhci state and needs root. Without
+    require_admin the tool emitted "libusbip: error: fopen" and empty output,
+    so this returned [] and the GUI's attached table was permanently empty --
+    no device could be detached from the UI."""
+    admin = []
+    _stub_run(monkeypatch, PORT_OUTPUT, admin_recorder=admin)
+    wrapper.list_attached_devices()
+
+    assert admin == [True]
+
+
+def test_attach_and_detach_ask_for_root(wrapper, monkeypatch):
+    admin = []
+    _stub_run(monkeypatch, "", admin_recorder=admin)
+    wrapper.attach_device("10.0.0.5", "1-1")
+    wrapper.detach_device("00")
+
+    assert admin == [True, True]
+
+
+def test_listing_remote_devices_does_not_need_root(wrapper, monkeypatch):
+    """`usbip list -r` is a plain network query; escalating would prompt for
+    nothing."""
+    admin = []
+    _stub_run(monkeypatch, LIST_REMOTE_OUTPUT, admin_recorder=admin)
+    wrapper.list_remote_devices("10.0.0.5")
+
+    assert admin == [False]
