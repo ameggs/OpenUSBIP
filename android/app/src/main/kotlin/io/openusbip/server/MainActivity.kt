@@ -116,10 +116,25 @@ class MainActivity : AppCompatActivity() {
         heading("OpenUSBIP Server")
 
         val running = UsbipService.isRunning
-        val address = UsbipService.localIpv4()
 
         keyValue("Status", if (running) "sharing" else "stopped")
-        keyValue("Address", "${address ?: "no network"}:${Protocol.DEFAULT_PORT}")
+        keyValue("Port", Protocol.DEFAULT_PORT.toString())
+
+        val addresses = UsbipService.localAddresses()
+        if (addresses.isEmpty()) {
+            keyValue("Address", "no network")
+        } else {
+            // Show every interface: which one a client needs depends on where
+            // the client is, and a VPN address is useless to a LAN client.
+            for (a in addresses) {
+                val note = when {
+                    a.isCgnat -> "  (VPN)"
+                    a.isMobile -> "  (mobile data)"
+                    else -> ""
+                }
+                keyValue("  ${a.iface}", "${a.address}:${Protocol.DEFAULT_PORT}$note")
+            }
+        }
         UsbipService.lastError?.let { keyValue("Last error", it) }
 
         button(if (running) "Stop sharing" else "Start sharing") {

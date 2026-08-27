@@ -93,7 +93,7 @@ class UsbipService : Service() {
             server = instance
             isRunning = true
             lastError = null
-            Log.i(TAG, "listening on ${localIpv4()}:${Protocol.DEFAULT_PORT}, image=${image.absolutePath} (${image.length()} bytes)")
+            Log.i(TAG, "listening on ${localAddresses().joinToString { "${it.iface}=${it.address}" }} port ${Protocol.DEFAULT_PORT}, image=${image.absolutePath} (${image.length()} bytes)")
             publish()
         } catch (e: Exception) {
             // Log as well as record: a service that swallows its own startup
@@ -129,7 +129,7 @@ class UsbipService : Service() {
                 !isRunning -> "Stopped"
                 sharedDevices.any { it.heldBy != null } ->
                     "In use by ${sharedDevices.firstNotNullOf { it.heldBy }}"
-                else -> "Sharing ${sharedDevices.size} device(s) on ${localIpv4() ?: "?"}"
+                else -> "Sharing ${sharedDevices.size} device(s) on ${primaryAddress() ?: "?"}"
             },
         )
     }
@@ -232,12 +232,53 @@ class UsbipService : Service() {
          */
         fun defaultImageSize(context: Context): Long = 2L * 1024 * 1024 * 1024
 
-        fun localIpv4(): String? = runCatching {
+        /** One reachable address, tagged with the interface it belongs to. */
+        data class LocalAddress(val iface: String, val address: String) {
+            /** Carrier-grade NAT, which on a phone means a VPN like Tailscale. */
+            val isCgnat: Boolean get() = address.startsWith("100.") &&
+                (address.split('.').getOrNull(1)?.toIntOrNull() ?: 0) in 64..127
+
+            val isMobile: Boolean get() = iface.startsWith("ccmni") ||
+                iface.startsWith("rmnet") || iface.startsWith("radio")
+        }
+
+        /**
+         * Every non-loopback IPv4 address, with its interface.
+         *
+         * Reporting just "the first one" was actively misleading: on a phone
+         * with a VPN up, the first interface enumerated was tun0, so the app
+         * advertised a Tailscale address while clients on the LAN needed the
+         * wlan0 one. Which address a client should use depends on where the
+         * client is, so show them all and let the user pick.
+         */
+        fun localAddresses(): List<LocalAddress> = runCatching {
             NetworkInterface.getNetworkInterfaces().toList()
                 .filter { it.isUp && !it.isLoopback }
-                .flatMap { it.inetAddresses.toList() }
-                .filterIsInstance<Inet4Address>()
-                .firstOrNull()?.hostAddress
-        }.getOrNull()
+                .flatMap { nif ->
+                    nif.inetAddresses.toList()
+                        .filterIsInstance<Inet4Address>()
+                        .mapNotNull { addr ->
+                            addr.hostAddress?.let { LocalAddress(nif.name, it) }
+                        }
+                }
+        }.getOrDefault(emptyList())
+
+        /**
+         * The address most likely to be what a user wants, for the
+         * notification line. Prefers Wi-Fi, then wired, then anything that is
+         * neither VPN nor mobile data.
+         */
+        fun primaryAddress(): String? {
+            val all = localAddresses()
+            return (
+                all.firstOrNull { it.iface.startsWith("wlan") }
+                    ?: all.firstOrNull { it.iface.startsWith("eth") }
+                    ?: all.firstOrNull { !it.isCgnat && !it.isMobile }
+                    ?: all.firstOrNull()
+                )?.address
+        }
+
+        @Deprecated("Ambiguous with more than one interface", ReplaceWith("primaryAddress()"))
+        fun localIpv4(): String? = primaryAddress()
     }
 }
