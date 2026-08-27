@@ -13,6 +13,7 @@ import android.util.Log
 import io.openusbip.server.MainActivity
 import io.openusbip.server.protocol.Protocol
 import io.openusbip.server.storage.FileBlockDevice
+import io.openusbip.server.mtp.MtpBackend
 import io.openusbip.server.storage.MassStorageBackend
 import java.io.File
 import java.net.Inet4Address
@@ -74,6 +75,14 @@ class UsbipService : Service() {
                 busid = VIRTUAL_DISK_BUSID,
             )
             registry.add(backend)
+
+            // Second device: MTP over the same server. This is the one that
+            // exposes real files, because MTP is file-level and so does not
+            // need exclusive ownership of the filesystem the way a block
+            // device does.
+            val sharedDir = sharedFilesDir(this)
+            sharedDir.mkdirs()
+            registry.add(MtpBackend(sharedDir, busid = MTP_BUSID, deviceName = Build.MODEL ?: "Android"))
 
             val instance = UsbipServer(
                 registry = registry,
@@ -192,6 +201,7 @@ class UsbipService : Service() {
 
         /** Virtual devices sit on bus 99 so they cannot collide with OTG. */
         const val VIRTUAL_DISK_BUSID = "99-1"
+        const val MTP_BUSID = "99-2"
 
         /** One shared device, as the UI needs to see it. */
         data class SharedDevice(val busid: String, val label: String, val heldBy: String?)
@@ -226,6 +236,17 @@ class UsbipService : Service() {
                 Intent(context, UsbipService::class.java).setAction(ACTION_STOP),
             )
         }
+
+        /**
+         * Directory served over MTP.
+         *
+         * App-specific external storage needs no runtime permission and is
+         * visible to the user over a cable, so it works out of the box.
+         * Serving the whole of shared storage would need
+         * MANAGE_EXTERNAL_STORAGE, granted by hand in Settings.
+         */
+        fun sharedFilesDir(context: Context): File =
+            File(context.getExternalFilesDir(null), "shared")
 
         /** Where the virtual disk image lives. */
         fun diskImageFile(context: Context): File =
