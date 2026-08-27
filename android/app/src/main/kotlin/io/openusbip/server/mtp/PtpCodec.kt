@@ -117,6 +117,13 @@ object PtpCodec {
             return sb.toString()
         }
 
+        /** u32 count followed by that many u16 elements. */
+        fun u16Array(): IntArray {
+            val count = u32()
+            val safe = count.coerceIn(0, buf.remaining() / 2)
+            return IntArray(safe) { u16() }
+        }
+
         fun u32Array(): IntArray {
             val count = u32()
             // Guard against a corrupt count trying to allocate gigabytes.
