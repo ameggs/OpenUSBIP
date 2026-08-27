@@ -168,6 +168,7 @@ class ServerListWidget(QWidget):
             "raspberry-pi": "🥧",
             "linux": "🐧",
             "windows": "🪟",
+            "android": "📱",
             "manual": "📌",
             "unknown": "❓"
         }

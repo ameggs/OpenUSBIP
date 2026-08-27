@@ -30,6 +30,7 @@ class UsbipService : Service() {
 
     private var server: UsbipServer? = null
     private val registry = DeviceRegistry()
+    private val mdns by lazy { MdnsAdvertiser(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -94,6 +95,10 @@ class UsbipService : Service() {
             isRunning = true
             lastError = null
             Log.i(TAG, "listening on ${localAddresses().joinToString { "${it.iface}=${it.address}" }} port ${Protocol.DEFAULT_PORT}, image=${image.absolutePath} (${image.length()} bytes)")
+
+            // Announce over mDNS so discovery-based clients find the phone
+            // without being told its address.
+            mdns.start(Protocol.DEFAULT_PORT)
             publish()
         } catch (e: Exception) {
             // Log as well as record: a service that swallows its own startup
@@ -108,6 +113,7 @@ class UsbipService : Service() {
 
     private fun stopSharing() {
         if (server != null) Log.i(TAG, "stopping server")
+        mdns.stop()
         server?.stop()
         server = null
         registry.clear()
