@@ -5,7 +5,11 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.IntentFilter
+import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.content.Intent
 import android.os.Build
 import android.os.Environment
@@ -15,6 +19,8 @@ import io.openusbip.server.MainActivity
 import io.openusbip.server.protocol.Protocol
 import io.openusbip.server.storage.FileBlockDevice
 import io.openusbip.server.mtp.MtpBackend
+import io.openusbip.server.usb.PassthroughBackend
+import io.openusbip.server.usb.UsbHost
 import io.openusbip.server.storage.MassStorageBackend
 import java.io.File
 import java.net.Inet4Address
@@ -32,7 +38,29 @@ class UsbipService : Service() {
 
     private var server: UsbipServer? = null
     private val registry = DeviceRegistry()
+
+    /** Busids currently offered as passthrough, so we do not add them twice. */
+    private val passthroughBusids = mutableSetOf<String>()
     private val mdns by lazy { MdnsAdvertiser(this) }
+    private val usbHost by lazy { UsbHost(getSystemService(Context.USB_SERVICE) as UsbManager) }
+
+    /**
+     * Add and remove passed-through devices as they are plugged and unplugged,
+     * and pick up permission grants. Without this a device attached after the
+     * service started would never be offered.
+     */
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                UsbManager.ACTION_USB_DEVICE_ATTACHED, ACTION_USB_PERMISSION -> refreshUsbDevices()
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> {
+                    val device: UsbDevice? = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+                    device?.let { removePassthrough(it) }
+                    publish()
+                }
+            }
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -109,6 +137,17 @@ class UsbipService : Service() {
             // Announce over mDNS so discovery-based clients find the phone
             // without being told its address.
             mdns.start(Protocol.DEFAULT_PORT)
+
+            registerReceiver(
+                usbReceiver,
+                IntentFilter().apply {
+                    addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                    addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+                    addAction(ACTION_USB_PERMISSION)
+                },
+                Context.RECEIVER_NOT_EXPORTED,
+            )
+            refreshUsbDevices()
             publish()
         } catch (e: Exception) {
             // Log as well as record: a service that swallows its own startup
@@ -121,8 +160,55 @@ class UsbipService : Service() {
         }
     }
 
+    /**
+     * Offer every OTG device we hold permission for, and ask for the rest.
+     *
+     * Permission is per-device and cannot be pre-granted, so a device shows up
+     * only after the user approves it.
+     */
+    private fun refreshUsbDevices() {
+        for ((usbDevice, wireDevice) in usbHost.exportableDevices()) {
+            val busid = wireDevice.busid
+            if (passthroughBusids.contains(busid)) continue
+
+            if (!usbHost.hasPermission(usbDevice)) {
+                requestUsbPermission(usbDevice)
+                continue
+            }
+
+            registry.add(PassthroughBackend(
+                getSystemService(Context.USB_SERVICE) as UsbManager, usbDevice, wireDevice,
+            ))
+            passthroughBusids += busid
+            Log.i(TAG, "offering passed-through device $busid (${UsbHost.describe(usbDevice)})")
+        }
+        publish()
+    }
+
+    private fun requestUsbPermission(device: UsbDevice) {
+        val manager = getSystemService(Context.USB_SERVICE) as UsbManager
+        val intent = PendingIntent.getBroadcast(
+            this, 0,
+            Intent(ACTION_USB_PERMISSION).setPackage(packageName),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        runCatching { manager.requestPermission(device, intent) }
+            .onFailure { Log.w(TAG, "permission request failed", it) }
+    }
+
+    private fun removePassthrough(usbDevice: UsbDevice) {
+        val busid = UsbHost.specOf(usbDevice)
+            .let { io.openusbip.server.usb.DeviceMapping.toUsbipDevice(it) }?.busid ?: return
+        if (passthroughBusids.remove(busid)) {
+            registry.remove(busid)
+            Log.i(TAG, "withdrew unplugged device $busid")
+        }
+    }
+
     private fun stopSharing() {
         if (server != null) Log.i(TAG, "stopping server")
+        runCatching { unregisterReceiver(usbReceiver) }
+        passthroughBusids.clear()
         mdns.stop()
         server?.stop()
         server = null
@@ -199,6 +285,7 @@ class UsbipService : Service() {
         private const val NOTIFICATION_ID = 1
 
         const val ACTION_STOP = "io.openusbip.server.STOP"
+        const val ACTION_USB_PERMISSION = "io.openusbip.server.USB_PERMISSION"
 
         /** Virtual devices sit on bus 99 so they cannot collide with OTG. */
         const val VIRTUAL_DISK_BUSID = "99-1"
