@@ -83,6 +83,9 @@ class PassthroughBackend(
             }
         }
         rawDescriptors = runCatching { conn.rawDescriptors ?: ByteArray(0) }.getOrDefault(ByteArray(0))
+        Log.i(TAG, "endpoints: " + endpoints.values.joinToString {
+            "0x%02x(type=%d,max=%d)".format(it.address, it.type, it.maxPacketSize)
+        })
         Log.i(
             TAG,
             "opened ${usbDevice.deviceName}: ${claimed.size} interface(s), " +
@@ -246,7 +249,15 @@ class PassthroughBackend(
         val direction =
             if (cmd.header.isIn) UsbConstants.USB_DIR_IN else UsbConstants.USB_DIR_OUT
         val endpoint = endpoints[key(cmd.header.ep, direction)]
-            ?: return UrbResult.stall()
+        if (endpoint == null) {
+            // Distinct from a device stall: we never found the endpoint at all.
+            Log.w(
+                TAG,
+                "no endpoint for ep${cmd.header.ep} dir=$direction; known: " +
+                    endpoints.values.joinToString { "0x%02x".format(it.address) },
+            )
+            return UrbResult.stall()
+        }
 
         return if (cmd.header.isIn) {
             // Read into at least one full packet, whatever the host asked for.
@@ -279,7 +290,27 @@ class PassthroughBackend(
             }
         } else {
             val payload = outData ?: ByteArray(0)
-            val moved = conn.bulkTransfer(endpoint, payload, payload.size, TIMEOUT_MS)
+            var moved = conn.bulkTransfer(endpoint, payload, payload.size, TIMEOUT_MS)
+
+            // One re-claim and retry before reporting a stall. Re-claiming the
+            // interface is the only reset Android exposes, and a first bulk
+            // write straight after enumeration can fail while the endpoint is
+            // still in whatever state the previous owner left it.
+            if (moved < 0) {
+                Log.w(TAG, "bulkOut ep=0x%02x failed, re-claiming and retrying".format(endpoint.address))
+                if (clearHalt(endpoint.address)) {
+                    endpoints[key(endpoint.endpointNumber, endpoint.direction)]?.let { fresh ->
+                        moved = conn.bulkTransfer(fresh, payload, payload.size, TIMEOUT_MS)
+                    }
+                }
+            }
+
+            if (DEBUG) {
+                Log.d(
+                    TAG,
+                    "  bulkOut ep=0x%02x len=%d -> moved=%d".format(endpoint.address, payload.size, moved),
+                )
+            }
             if (moved < 0) UrbResult.stall() else UrbResult(0, ByteArray(moved))
         }
     }
