@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.Environment
 import android.os.IBinder
 import android.util.Log
 import io.openusbip.server.MainActivity
@@ -238,15 +239,32 @@ class UsbipService : Service() {
         }
 
         /**
+         * Whether we may serve the user's whole shared storage.
+         *
+         * Below Android 11 there is no such gate, so broad access follows from
+         * the legacy read permission being in the manifest.
+         */
+        fun hasFullStorageAccess(): Boolean =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                Environment.isExternalStorageManager()
+            } else {
+                true
+            }
+
+        /**
          * Directory served over MTP.
          *
-         * App-specific external storage needs no runtime permission and is
-         * visible to the user over a cable, so it works out of the box.
-         * Serving the whole of shared storage would need
-         * MANAGE_EXTERNAL_STORAGE, granted by hand in Settings.
+         * With MANAGE_EXTERNAL_STORAGE this is the user's actual internal
+         * storage -- the same tree a cable shows. Without it we fall back to
+         * the app's own directory, which needs no permission, and the UI says
+         * which mode is in force rather than silently serving the wrong thing.
          */
         fun sharedFilesDir(context: Context): File =
-            File(context.getExternalFilesDir(null), "shared")
+            if (hasFullStorageAccess()) {
+                Environment.getExternalStorageDirectory()
+            } else {
+                File(context.getExternalFilesDir(null), "shared")
+            }
 
         /** Where the virtual disk image lives. */
         fun diskImageFile(context: Context): File =

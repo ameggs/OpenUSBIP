@@ -9,7 +9,9 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.hardware.usb.UsbManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.os.Bundle
 import android.util.TypedValue
 import android.view.View
@@ -145,6 +147,23 @@ class MainActivity : AppCompatActivity() {
 
         divider()
 
+        heading("Files shared over MTP")
+        val fullAccess = UsbipService.hasFullStorageAccess()
+        keyValue("Serving", UsbipService.sharedFilesDir(this).absolutePath)
+        keyValue("Scope", if (fullAccess) "all internal storage" else "this app's folder only")
+
+        if (!fullAccess) {
+            body(
+                "Only this app's own folder is shared. To browse your actual " +
+                    "internal storage from a computer, grant All files access. " +
+                    "It is a restricted permission Android only lets you enable " +
+                    "by hand.",
+            )
+            button("Grant All files access") { openAllFilesSettings() }
+        }
+
+        divider()
+
         heading("Virtual disk")
         val image = UsbipService.diskImageFile(this)
         if (image.exists()) {
@@ -259,6 +278,25 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.argb(60, 128, 128, 128))
         },
     )
+
+    /**
+     * Send the user to the All files access screen.
+     *
+     * There is no runtime prompt for MANAGE_EXTERNAL_STORAGE; it can only be
+     * granted from Settings, so the app has to hand them there.
+     */
+    private fun openAllFilesSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        val direct = Intent(
+            Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+            Uri.parse("package:$packageName"),
+        )
+        // Some OEM builds lack the per-app screen; fall back to the list.
+        val fallback = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+        runCatching { startActivity(direct) }
+            .recoverCatching { startActivity(fallback) }
+            .onFailure { body("Could not open Settings: ${it.message}") }
+    }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 

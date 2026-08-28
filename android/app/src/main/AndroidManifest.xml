@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Sharing devices over the network -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -15,6 +16,15 @@
          shared with nothing plugged in. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Serving the user's actual files rather than just this app's folder.
+         A restricted permission: granted by hand in Settings, and Play Store
+         would reject it, which is fine for a sideloaded tool. Without it the
+         app falls back to its own directory and says so. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <!-- USB host mode. Not every phone supports it; declare it non-required so
          the app still installs, and report the situation in the UI instead. -->
