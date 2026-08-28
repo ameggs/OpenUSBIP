@@ -305,10 +305,53 @@ RemainAfterExit=yes
 WantedBy=multi-user.target
 AUTOBIND_SERVICE
 
-# Create udev rule for hotplug
+# Hotplug binding.
+#
+# The helper is a separate script rather than an inline RUN command for two
+# reasons. udev RUN is meant to return immediately -- systemd-udevd kills
+# anything still running when the event completes, and a sleep inside RUN also
+# ties up a udev worker for every device plugged in. And the device needs a
+# moment to settle before usbip will bind it, which is what the sleep was for.
+# systemd-run --no-block hands the work off and lets udev finish.
+sudo tee /usr/local/bin/openusbip-bind > /dev/null << 'BIND_HELPER'
+#!/bin/bash
+# Bind one USB device for sharing. Invoked from udev via systemd-run.
+busid="$1"
+[ -n "$busid" ] || exit 0
+
+USBIP_BIN="$(command -v usbip 2>/dev/null || true)"
+if [ -z "$USBIP_BIN" ]; then
+    for c in /usr/sbin/usbip /usr/bin/usbip /usr/lib/linux-tools/*/usbip; do
+        [ -x "$c" ] && USBIP_BIN="$c" && break
+    done
+fi
+[ -n "$USBIP_BIN" ] || { logger -t usbip-hotplug "usbip binary not found"; exit 1; }
+
+# Let the device finish settling; binding too early fails.
+sleep 2
+
+if out=$("$USBIP_BIN" bind -b "$busid" 2>&1); then
+    logger -t usbip-hotplug "bound $busid"
+else
+    # Already bound is the common case on a re-trigger and is not a problem.
+    case "$out" in
+        *"already bound"*) logger -t usbip-hotplug "$busid already bound" ;;
+        *) logger -t usbip-hotplug "could not bind $busid: $out" ;;
+    esac
+fi
+BIND_HELPER
+sudo chmod +x /usr/local/bin/openusbip-bind
+
 sudo tee /etc/udev/rules.d/99-usbip-auto-bind.rules > /dev/null << 'UDEV_RULE'
-# Auto-bind USB devices when plugged in
-SUBSYSTEM=="usb", ACTION=="add", ATTRS{idVendor}!="0424", ATTRS{idVendor}!="1d6b", ATTRS{bDeviceClass}!="09", RUN+="/bin/bash -c 'sleep 3 && /usr/sbin/usbip bind -b $(basename %p) 2>&1 | /usr/bin/logger -t usbip-hotplug'"
+# Auto-bind USB devices for sharing when they are plugged in.
+#
+# DEVTYPE=="usb_device" matters: without it the rule also fires for every
+# usb_interface event ("2-2.3:1.0"), and usbip can only bind whole devices, so
+# each plug-in produced a burst of guaranteed failures in the log.
+#
+# Class 09 is a hub. Exporting one would move the whole tree beneath it, and
+# root hubs are class 09 too, so this covers them without a vendor blocklist.
+SUBSYSTEM=="usb", ACTION=="add", ENV{DEVTYPE}=="usb_device", ATTRS{bDeviceClass}!="09", RUN+="/usr/bin/systemd-run --no-block /usr/local/bin/openusbip-bind %k"
 UDEV_RULE
 
 # Reload systemd and udev

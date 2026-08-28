@@ -156,9 +156,6 @@ port-forward 3240.**
   rather than showing as busy, which matches `usbipd`.
 - **Tailscale needs an ACL change.** Tailnet policies are port allowlists and
   3240 is not on one by default, so remote access is refused until it is added.
-- **Hotplug on the Linux server only binds at boot.** `usb-auto-bind` is a
-  one-shot unit, so a device plugged in later needs a manual `usbip bind` or a
-  reboot.
 
 ---
 
