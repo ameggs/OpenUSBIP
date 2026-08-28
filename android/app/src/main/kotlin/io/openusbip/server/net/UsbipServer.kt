@@ -17,6 +17,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import android.util.Log
 
 /**
  * A USB/IP server: the network half of exporting devices from this phone.
@@ -143,6 +144,11 @@ class UsbipServer(
                 }
 
                 val backend = registry.claim(busid, client)
+                Log.i(
+                    "UsbipServer",
+                    "IMPORT '$busid' from $client -> ${if (backend == null) "REFUSED" else "ok"}" +
+                        " (known: ${registry.all().map { it.first.busid }})",
+                )
                 if (backend == null) {
                     // Unknown or already held. The failure reply is the bare
                     // header -- see OpReply.importFailure.
@@ -151,7 +157,15 @@ class UsbipServer(
                     return
                 }
 
-                output.write(OpReply.importSuccess(backend.device))
+                val reply = OpReply.importSuccess(backend.device)
+                Log.i(
+                    "UsbipServer",
+                    "IMPORT reply ${reply.size} bytes, dev busid=${backend.device.busid} " +
+                        "busnum=${backend.device.busnum} devnum=${backend.device.devnum} " +
+                        "speed=${backend.device.speed} ifaces=${backend.device.numInterfaces} " +
+                        "path=${backend.device.path}",
+                )
+                output.write(reply)
                 output.flush()
                 listener.onDeviceImported(client, busid)
 
