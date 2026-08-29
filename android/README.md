@@ -84,11 +84,7 @@ synthesised mass-storage device, foreground service, control-panel UI.
 
 ### Not written yet
 
-- **Passthrough backend for real OTG devices.** `usb/UsbHost.kt` enumerates
-  them and `DeviceMapping` converts them to wire structs, but nothing forwards
-  URBs to `UsbDeviceConnection` yet, so the UI lists them as "passthrough not
-  implemented". This is the main remaining feature.
-- Per-device share toggles; the virtual disk is currently offered
+- **Per-device share toggles.** The virtual disk and MTP device are offered
   automatically whenever sharing starts.
 - Choosing the image size, or backing the export with a different file.
 - Nothing formats the image, so a fresh one arrives unpartitioned and the

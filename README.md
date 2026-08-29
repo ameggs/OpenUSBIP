@@ -141,13 +141,17 @@ port-forward 3240.**
 
 ## Known issues
 
-- **OTG passthrough is unfinished.** The protocol side is proven — a real
-  SanDisk drive completed full enumeration, `INQUIRY`, `READ CAPACITY` and
-  512-byte sector reads through the phone. But bulk transfers fail
-  intermittently at Android's own API (`bulkTransfer` returns -1) depending on
-  the hub and power arrangement, and the drive can drop off the phone's USB bus
-  entirely when powered from the battery. Under investigation; MTP is the
-  reliable route for files.
+- **OTG passthrough is experimental and currently parked.** The protocol side
+  is proven — a real SanDisk drive completed full enumeration, `INQUIRY`,
+  `READ CAPACITY` and 512-byte sector reads through the phone — but it is not
+  dependable. Bulk transfers fail at Android's own API (`bulkTransfer` returns
+  -1) depending on the hub and power arrangement, and behaviour changed between
+  a powered and unpowered hub with the same drive. The untested variable is the
+  drive connected straight to the phone with no hub in between.
+
+  **Use MTP for phone files.** It is reliable, needs no adapters or hubs, and
+  is what a phone speaks over a cable anyway. Passthrough is only worth
+  pursuing for non-storage devices.
 - **No isochronous transfers on Android.** `UsbDeviceConnection` offers control,
   bulk and interrupt only, so USB audio and webcams cannot be shared from a
   phone. Storage, HID, serial and printers are fine.
