@@ -9,7 +9,7 @@ USB/IP protocol:
 | Piece | What it is | Runs on |
 |---|---|---|
 | **Desktop client** | Qt6 GUI: find servers, attach and detach devices | Linux, Windows |
-| **Server** | Shares locally-plugged USB devices | Linux, Raspberry Pi |
+| **Server** | Shares locally-plugged USB devices | Linux, Raspberry Pi, Windows |
 | **Android app** | Shares the phone's *files* and its OTG devices | Android 7+ |
 
 Any of them interoperates with stock `usbip` from the Linux kernel tools, so a
@@ -50,6 +50,25 @@ The installer must run from a checkout — it wires the launcher to the
 repository directory — and it configures a narrowly scoped passwordless sudo
 rule for the `usbip` binary, which is what lets the GUI attach without
 prompting.
+
+### Windows
+
+```powershell
+.\packaging\windows\build.ps1 -Clean
+```
+
+Produces `dist\OpenUSBIP\OpenUSBIP.exe` (the GUI client) and
+`dist\OpenUSBIPServer\OpenUSBIPServer.exe`. Neither contains a USB/IP driver
+— that has to be signed, and this project ships none — so install the driver
+side separately:
+
+- Client: [usbip-win2](https://github.com/vadimgrn/usbip-win2/releases)
+- Server: [usbipd-win](https://github.com/dorssel/usbipd-win/releases)
+
+The Windows server does not reimplement a daemon; usbipd-win already is one.
+What it adds is mDNS advertisement, so an OpenUSBIP client discovers a Windows
+PC the same way it discovers a Pi. See
+[`packaging/windows/README.md`](packaging/windows/README.md).
 
 ### Share from an Android phone
 
@@ -107,7 +126,10 @@ they run as plain JVM tests. 184 tests, none needing a phone.
   - Debian/Raspberry Pi OS: `sudo apt install usbip`
   - Ubuntu/Zorin: `sudo apt install linux-tools-common` (there is no `usbip`
     package there; the binary ships with linux-tools)
-  - Windows: [usbipd-win](https://github.com/dorssel/usbipd-win)
+  - Windows client: [usbip-win2](https://github.com/vadimgrn/usbip-win2)
+    (ships the vhci driver Windows needs to attach anything)
+  - Windows server: [usbipd-win](https://github.com/dorssel/usbipd-win)
+  - Neither adds itself to `PATH`; OpenUSBIP searches Program Files for them
 - **Android**: 7.0+, USB host mode for passthrough, JDK 17 and SDK 34 to build
 
 ---
@@ -160,6 +182,13 @@ port-forward 3240.**
   rather than showing as busy, which matches `usbipd`.
 - **Tailscale needs an ACL change.** Tailnet policies are port allowlists and
   3240 is not on one by default, so remote access is refused until it is added.
+- **The Windows executables have not yet been built on Windows.** The specs and
+  build script are written and were validated by building with the same specs
+  on Linux — including a frozen binary that runs and advertises over mDNS — but
+  the Windows-only parts (icon and version resources, the UAC manifest, the
+  Program Files search against a real usbip-win2 install) are so far covered
+  only by unit tests and the `windows` CI job. Treat them as untested on
+  hardware until that job has run.
 
 ---
 
@@ -168,7 +197,7 @@ port-forward 3240.**
 ```bash
 # Python
 pip install -r requirements-dev.txt
-QT_QPA_PLATFORM=offscreen pytest        # 40 tests
+QT_QPA_PLATFORM=offscreen pytest        # 100 tests
 ruff check .
 
 # Android
@@ -179,7 +208,10 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=$HOME/Android/S
 ```
 
 CI runs the Python suite on 3.10 and 3.12, lints, byte-compiles the tree and
-syntax-checks the installers.
+syntax-checks the installers. A separate Windows job runs the same suite on a
+`windows-latest` runner — where the Program Files search and the elevation
+handling actually execute — parse-checks every PowerShell script, builds both
+executables with PyInstaller and smoke-tests the server one.
 
 **A note on how this codebase is tested.** The protocol layers — USB/IP wire
 format, SCSI, Bulk-Only Transport, PTP/MTP — are deliberately free of platform

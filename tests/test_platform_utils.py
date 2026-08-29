@@ -84,3 +84,97 @@ def test_unknown_role_falls_back_to_both(monkeypatch, tmp_path):
 def test_non_linux_is_a_no_op(monkeypatch):
     monkeypatch.setattr(platform_utils, "get_platform", lambda: Platform.WINDOWS)
     assert check_kernel_modules(role="client") == (True, [])
+
+
+# --- Windows wiring ---------------------------------------------------------
+#
+# These exercise the Windows branches from Linux by patching the platform
+# probe. They are about the wiring -- that the branch is reached and returns
+# the right shape -- while the search logic itself is pinned down in
+# test_windows_support.py.
+
+
+def test_find_command_searches_program_files_on_windows(monkeypatch):
+    """
+    A working usbip-win2 install is invisible to PATH, so PATH alone reported
+    the tools missing on machines that had them.
+    """
+    from src.utils import platform_utils
+
+    monkeypatch.setattr(platform_utils, "get_platform", lambda: Platform.WINDOWS)
+    monkeypatch.setattr(platform_utils.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        "src.utils.windows_support.find_tool",
+        lambda command, *a, **k: r"C:\Program Files\usbip-win2\usbip.exe",
+    )
+
+    assert platform_utils.find_command("usbip").endswith("usbip.exe")
+
+
+def test_find_command_still_prefers_path_when_it_has_the_tool(monkeypatch):
+    from src.utils import platform_utils
+
+    monkeypatch.setattr(platform_utils, "get_platform", lambda: Platform.WINDOWS)
+    monkeypatch.setattr(
+        platform_utils.shutil, "which", lambda name: r"C:\tools\usbip.exe"
+    )
+
+    assert platform_utils.find_command("usbip") == r"C:\tools\usbip.exe"
+
+
+def test_windows_admin_requirement_explains_itself_instead_of_failing(monkeypatch):
+    """
+    Windows cannot elevate a running process, so there is no equivalent of
+    prepending sudo. Running the command regardless produces an opaque access
+    error; this returns something a user can act on.
+    """
+    from src.utils import platform_utils
+
+    monkeypatch.setattr(platform_utils, "get_platform", lambda: Platform.WINDOWS)
+    monkeypatch.setattr(platform_utils, "is_admin", lambda: False)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("the command must not run without elevation")
+
+    monkeypatch.setattr(platform_utils.subprocess, "run", explode)
+
+    code, out, err = platform_utils.run_command(["usbip", "attach"], require_admin=True)
+
+    assert code != 0
+    assert "administrator" in err.lower()
+
+
+def test_windows_commands_not_needing_admin_still_run(monkeypatch):
+    """The elevation guard must only apply to require_admin=True."""
+    from src.utils import platform_utils
+
+    monkeypatch.setattr(platform_utils, "get_platform", lambda: Platform.WINDOWS)
+    monkeypatch.setattr(platform_utils, "is_admin", lambda: False)
+
+    class Result:
+        returncode = 0
+        stdout = "devices"
+        stderr = ""
+
+    monkeypatch.setattr(platform_utils.subprocess, "run", lambda *a, **k: Result())
+
+    assert platform_utils.run_command(["usbipd", "state"])[1] == "devices"
+
+
+def test_port_is_listening_detects_a_live_socket():
+    import socket
+
+    from src.utils.platform_utils import port_is_listening
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    port = server.getsockname()[1]
+    try:
+        assert port_is_listening(port) is True
+    finally:
+        server.close()
+
+    # Closed again: the same port must now read as down, which is what
+    # distinguishes this from merely checking that a service is registered.
+    assert port_is_listening(port, timeout=0.3) is False

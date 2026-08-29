@@ -9,3 +9,8 @@ venv/
 dist/
 build/
 *.appimage
+.venv-build/
+.pytest_cache/
+.ruff_cache/
+android/local.properties
+android/.gradle/

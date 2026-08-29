@@ -254,3 +254,86 @@ def test_listing_remote_devices_does_not_need_root(wrapper, monkeypatch):
     wrapper.list_remote_devices("10.0.0.5")
 
     assert admin == [False]
+
+
+# --- usbip-win2 output ------------------------------------------------------
+#
+# The Windows client is a separate implementation, not a port of the kernel
+# tool, and it formats two of these listings differently. Both differences are
+# silent: the commands succeed, the parser matches nothing, and the GUI simply
+# shows an empty list. These fixtures are transcribed from the format strings
+# in usbip-win2's own source (userspace/usbip/list.cpp and port.cpp).
+
+WIN_LIST_REMOTE_OUTPUT = """\
+Exportable USB devices
+======================
+ - 192.168.0.34
+    1-1    : Logitech, Inc. : Unifying Receiver (046d:c52b)
+           : /sys/devices/pci0000:00/0000:00:14.0/usb1/1-1
+           : (Defined at Interface level) (00/00/00)
+
+    3-2    : SanDisk Corp. : Ultra Fit (0781:5583)
+           : /sys/devices/pci0000:00/0000:00:14.0/usb3/3-2
+           :  0 - Mass Storage / SCSI / Bulk-Only (08/06/50)
+"""
+
+WIN_PORT_OUTPUT = """\
+Imported USB devices
+====================
+Port 01: device in use at High Speed(480Mbps)
+         SanDisk Corp. : Ultra Fit (0781:5583)
+           -> usbip://192.168.0.34:3240/3-2
+           -> remote bus/dev: 003/004
+           -> serial: 4C530001234567890
+           -> mode: zero-copy
+"""
+
+
+def test_list_remote_handles_the_centred_busid_of_usbip_win2(wrapper, monkeypatch):
+    # Linux right-aligns the busid ("        1-1: ..."), usbip-win2 centres it
+    # ("    1-1    : ..."), so the colon is not adjacent to the busid.
+    _stub_run(monkeypatch, WIN_LIST_REMOTE_OUTPUT)
+    devices = wrapper.list_remote_devices("192.168.0.34")
+
+    assert [d.busid for d in devices] == ["1-1", "3-2"]
+    assert devices[1].vendor_id == "0781"
+    assert devices[1].description == "SanDisk Corp. : Ultra Fit"
+
+
+def test_list_remote_still_ignores_continuation_lines_on_windows(wrapper, monkeypatch):
+    # Loosening the busid pattern must not start matching the indented sysfs
+    # path or the interface-class lines that follow each device.
+    _stub_run(monkeypatch, WIN_LIST_REMOTE_OUTPUT)
+    assert len(wrapper.list_remote_devices("192.168.0.34")) == 2
+
+
+def test_list_attached_parses_windows_output_without_a_local_busid(
+    wrapper, monkeypatch
+):
+    # usbip-win2 prints "  -> usbip://host:port/busid" with nothing before the
+    # arrow. Requiring a local busid there left the attached table empty, so
+    # nothing could be detached from the GUI.
+    _stub_run(monkeypatch, WIN_PORT_OUTPUT)
+    attached = wrapper.list_attached_devices()
+
+    assert len(attached) == 1
+    assert attached[0]["port"] == "01"
+    assert attached[0]["busid"] == "3-2"
+    assert attached[0]["remote_host"] == "192.168.0.34"
+    assert attached[0]["remote_port"] == "3240"
+
+
+def test_windows_attached_entry_still_has_a_local_busid_value(wrapper, monkeypatch):
+    # The GUI renders this column unconditionally; falling back to the remote
+    # busid keeps it from showing "None".
+    _stub_run(monkeypatch, WIN_PORT_OUTPUT)
+    assert wrapper.list_attached_devices()[0]["local_busid"] == "3-2"
+
+
+def test_linux_local_busid_is_still_preferred_when_present(wrapper, monkeypatch):
+    # The optional group must not swallow the Linux form, where the local and
+    # remote busids are genuinely different values worth telling apart.
+    _stub_run(monkeypatch, PORT_OUTPUT)
+    entry = wrapper.list_attached_devices()[0]
+    assert entry["local_busid"] == "1-1"
+    assert entry["busid"] == "1-1"

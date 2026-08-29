@@ -61,3 +61,71 @@ jobs:
         with:
           severity: warning
         continue-on-error: true
+
+  windows:
+    # The Windows support is the part hardest to verify by hand -- tool
+    # discovery, the packaged build, and PowerShell syntax all only fail on
+    # Windows. A runner exercises them on every push instead.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in Get-ChildItem -Recurse -Filter *.ps1) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName, [ref]$null, [ref]$errors) > $null
+            if ($errors) {
+              $failed = $true
+              Write-Host "FAIL $($file.Name)"
+              $errors | ForEach-Object {
+                Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)"
+              }
+            } else {
+              Write-Host "ok   $($file.Name)"
+            }
+          }
+          if ($failed) { exit 1 }
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests on Windows
+        # The Windows code paths -- find_command's Program Files search and
+        # run_command's elevation refusal -- only actually execute here.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest
+
+      - name: Build the executables
+        shell: pwsh
+        run: |
+          pip install "pyinstaller>=6.3"
+          pyinstaller --noconfirm packaging/windows/openusbip-client.spec
+          pyinstaller --noconfirm packaging/windows/openusbip-server.spec
+
+      - name: Check the executables start
+        shell: pwsh
+        # --help exits before any GUI or USB/IP work, so this runs unattended
+        # while still proving the frozen imports resolve. A missing hidden
+        # import shows up here and nowhere earlier.
+        run: |
+          .\dist\OpenUSBIPServer\OpenUSBIPServer.exe --help
+          if ($LASTEXITCODE -ne 0) { throw "server exe failed to start" }
+          Write-Host "server exe starts"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openusbip-windows
+          path: dist/
+          retention-days: 14

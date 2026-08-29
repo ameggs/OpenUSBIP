@@ -46,13 +46,24 @@ def is_admin() -> bool:
 
 
 def find_command(command: str) -> str | None:
-    """Find full path to a command"""
-    # Try standard PATH first
+    """
+    Find the full path to a command.
+
+    PATH alone is not enough on either platform we care about: Debian puts
+    usbip in /usr/sbin, which is off PATH for non-root users, and on Windows
+    neither usbip-win2 nor usbipd-win adds itself to PATH at all -- so a
+    perfectly good installation looks missing.
+    """
     result = shutil.which(command)
     if result:
         return result
 
-    # Also check /usr/sbin (common on Debian/Raspberry Pi)
+    if get_platform() == Platform.WINDOWS:
+        from src.utils import windows_support
+
+        return windows_support.find_tool(command)
+
+    # Common on Debian/Raspberry Pi, and off PATH for ordinary users.
     sbin_path = f"/usr/sbin/{command}"
     if os.path.exists(sbin_path):
         return sbin_path
@@ -68,13 +79,16 @@ def check_usbip_installed() -> tuple[bool, str]:
     current_platform = get_platform()
 
     if current_platform == Platform.WINDOWS:
-        # Check for usbipd-win (server) or usbip.exe (client)
-        usbipd = find_command("usbipd")
-        usbip = find_command("usbip")
+        from src.utils import windows_support
 
-        if usbipd or usbip:
+        # usbip.exe is the client (usbip-win2, which ships the vhci driver);
+        # usbipd.exe is the server (usbipd-win). Either alone is useful.
+        usbip = find_command("usbip")
+        usbipd = find_command("usbipd")
+
+        if usbip or usbipd:
             return True, "USB/IP tools found"
-        return False, "Please install usbipd-win from https://github.com/dorssel/usbipd-win"
+        return False, windows_support.missing_client_message()
 
     elif current_platform == Platform.LINUX:
         # Check for usbip command
@@ -161,6 +175,13 @@ def run_command(cmd: list[str], timeout: int = 10, require_admin: bool = False) 
         if get_platform() == Platform.LINUX:
             cmd = ["sudo", "-n"] + cmd
             used_sudo = True
+        elif get_platform() == Platform.WINDOWS:
+            # Windows has no per-command escalation: a process is elevated or
+            # it is not. Running the command anyway would fail with an opaque
+            # access error, so say plainly what has to happen instead.
+            from src.utils import windows_support
+
+            return -1, "", windows_support.needs_elevation_message()
 
     try:
         result = subprocess.run(
@@ -189,6 +210,24 @@ def run_command(cmd: list[str], timeout: int = 10, require_admin: bool = False) 
         )
 
     return result.returncode, result.stdout, result.stderr
+
+
+def port_is_listening(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -> bool:
+    """
+    Whether something is accepting TCP connections on `host:port`.
+
+    Used to check that a USB/IP daemon is actually up. This is preferred over
+    asking the service manager because it tests the thing clients depend on --
+    a registered-but-wedged service reports as running while refusing
+    connections, and that is the failure worth catching.
+    """
+    import socket
+
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
 
 
 def get_local_ip() -> str:

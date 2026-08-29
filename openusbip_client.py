@@ -12,6 +12,25 @@ _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+def _fatal(title: str, message: str) -> None:
+    """
+    Report an unrecoverable startup problem and exit.
+
+    Prints to stderr and, when Qt is usable, also shows a dialog. Both, not
+    one or the other: the console build has no dialog to look at and the
+    windowed build has no console.
+    """
+    print(f"\nERROR: {message}", file=sys.stderr)
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+
+        if QApplication.instance() is not None:
+            QMessageBox.critical(None, f"OpenUSBIP - {title}", message)
+    except Exception:
+        pass  # already reported on stderr; never fail inside the failure path
+    sys.exit(1)
+
+
 def main():
     """Main entry point"""
     print("OpenUSBIP Client v0.1.0")
@@ -40,14 +59,19 @@ def main():
     platform = get_platform()
     logger.info(f"Running on: {platform.value}")
 
+    # The application object is created before the preflight checks so those
+    # can report failures in a dialog. In the packaged Windows build there is
+    # no console attached, so a printed error goes nowhere and the app simply
+    # disappears -- the single most confusing way for a program to fail.
+    app = QApplication(sys.argv)
+    app.setApplicationName("OpenUSBIP Client")
+    app.setOrganizationName("OpenUSBIP")
+
     # Check USB/IP installation
     installed, msg = check_usbip_installed()
     if not installed:
         logger.error(msg)
-        print(f"\nERROR: {msg}")
-        sys.exit(1)
-
-    logger.info(msg)
+        _fatal("USB/IP tools not found", msg)
 
     # Check kernel modules (Linux only)
     if platform.value == "linux":
@@ -66,10 +90,6 @@ def main():
 
     # Start GUI
     logger.info("Starting GUI...")
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("OpenUSBIP Client")
-    app.setOrganizationName("OpenUSBIP")
 
     # Import and create main window
     from src.gui.main_window import MainWindow

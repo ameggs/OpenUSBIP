@@ -60,19 +60,18 @@ class USBIPWrapper:
         self._usbipd_cmd = self._find_usbipd_command()
 
     def _find_usbip_command(self) -> str | None:
-        """Find usbip command"""
-        if self.platform == Platform.WINDOWS:
-            # Windows may have usbip.exe in different locations
-            return find_command("usbip") or find_command("usbip.exe")
-        else:
-            return find_command("usbip")
+        """
+        Locate the client tool.
+
+        No platform branch: find_command already knows where each platform
+        hides it -- /usr/sbin on Debian, Program Files on Windows -- and adds
+        the .exe suffix itself.
+        """
+        return find_command("usbip")
 
     def _find_usbipd_command(self) -> str | None:
-        """Find usbipd command"""
-        if self.platform == Platform.WINDOWS:
-            return find_command("usbipd") or find_command("usbipd.exe")
-        else:
-            return find_command("usbipd")
+        """Locate the server tool."""
+        return find_command("usbipd")
 
     def _base_cmd(self, port: int = DEFAULT_USBIP_PORT) -> list[str]:
         """
@@ -106,59 +105,48 @@ class USBIPWrapper:
         return self._list_local_devices_linux()
 
     def _list_local_devices_windows(self) -> list[USBDevice]:
-        """List local devices on Windows using usbipd"""
-        devices = []
+        """
+        List local devices on Windows using usbipd-win.
 
-        # Run: usbipd list
-        returncode, stdout, stderr = run_command([self._usbipd_cmd, "list"])  # type: ignore
+        Prefers `usbipd state`, whose JSON usbipd-win maintains as a
+        machine-readable interface. `usbipd list` is only a fallback for
+        installations predating that command: its table truncates the device
+        name to 60 columns and pads it with the same spaces that separate the
+        columns, so it cannot be parsed as reliably.
+        """
+        from src.utils import windows_support
 
-        if returncode != 0:
-            logger.error(f"Failed to list devices: {stderr}")
-            return devices
+        returncode, stdout, stderr = run_command([self._usbipd_cmd, "state"])  # type: ignore
+        parsed: list[dict[str, str]] = []
 
-        # Parse output
-        # Example format:
-        # BUSID  VID:PID    DEVICE                                            STATE
-        # 1-1    046d:c52b  Logitech USB Input Device                         Not shared
-        # 1-2    0781:5583  SanDisk USB Device                                Shared
+        if returncode == 0:
+            parsed = windows_support.parse_state_json(stdout)
+            if not parsed and stdout.strip():
+                logger.warning("usbipd state returned output that did not parse")
+        else:
+            logger.info(f"usbipd state unavailable ({stderr.strip()}); trying list")
+            returncode, stdout, stderr = run_command([self._usbipd_cmd, "list"])  # type: ignore
+            if returncode != 0:
+                logger.error(f"Failed to list devices: {stderr}")
+                return []
+            parsed = windows_support.parse_list_output(stdout)
 
-        for line in stdout.split('\n')[1:]:  # Skip header
-            line = line.strip()
-            if not line:
-                continue
+        state_map = {
+            windows_support.STATE_ATTACHED: DeviceState.ATTACHED,
+            windows_support.STATE_SHARED: DeviceState.AVAILABLE,
+            windows_support.STATE_NOT_SHARED: DeviceState.BUSY,
+        }
 
-            parts = line.split(maxsplit=3)
-            if len(parts) < 4:
-                continue
-
-            busid = parts[0]
-            vid_pid = parts[1]
-            description = parts[2]
-            state_str = parts[3] if len(parts) > 3 else "unknown"
-
-            # Parse VID:PID
-            if ':' in vid_pid:
-                vendor_id, product_id = vid_pid.split(':', 1)
-            else:
-                vendor_id, product_id = "0000", "0000"
-
-            # Determine state
-            if "shared" in state_str.lower():
-                state = DeviceState.AVAILABLE
-            elif "attached" in state_str.lower():
-                state = DeviceState.ATTACHED
-            else:
-                state = DeviceState.BUSY
-
-            devices.append(USBDevice(
-                busid=busid,
-                vendor_id=vendor_id,
-                product_id=product_id,
-                description=description,
-                state=state
-            ))
-
-        return devices
+        return [
+            USBDevice(
+                busid=d["busid"],
+                vendor_id=d["vendor_id"],
+                product_id=d["product_id"],
+                description=d["description"],
+                state=state_map.get(d["state"], DeviceState.BUSY),
+            )
+            for d in parsed
+        ]
 
     def _list_local_devices_linux(self) -> list[USBDevice]:
         """List local devices on Linux using usbip"""
@@ -238,18 +226,22 @@ class USBIPWrapper:
             logger.error(f"Failed to list remote devices on {host}: {stderr}")
             return devices
 
-        # Parse output (similar format on all platforms)
-        # Exportable USB devices
-        # ======================
-        #  - 1-1: Logitech, Inc. : Unifying Receiver (046d:c52b)
-        #         : /sys/devices/pci0000:00/0000:00:14.0/usb1/1-1
-        #         : (Defined at Interface level) (00/00/00)
+        # Parse output. The two implementations differ in one detail:
+        #
+        #   Linux usbip     printf("%11s: %s\n", ...)   -> right-aligned busid
+        #           1-1: Logitech, Inc. : Unifying Receiver (046d:c52b)
+        #              : /sys/devices/pci0000:00/0000:00:14.0/usb1/1-1
+        #
+        #   usbip-win2      format("{:^11}: {}\n", ...) -> *centred* busid
+        #       1-1    : Logitech, Inc. : Unifying Receiver (046d:c52b)
+        #
+        # so the colon is not adjacent to the busid on Windows. Requiring
+        # adjacency made every remote device invisible to the Windows client.
 
         current_device = None
         for line in stdout.split('\n'):
-            # Match device line: "      busid: description (vid:pid)"
-            # Can have leading whitespace
-            device_match = re.match(r'\s+(\S+):\s+(.+?)\s+\(([0-9a-f]{4}):([0-9a-f]{4})\)', line, re.IGNORECASE)
+            # Match device line: "   busid   : description (vid:pid)"
+            device_match = re.match(r'\s+(\S+)\s*:\s+(.+?)\s+\(([0-9a-f]{4}):([0-9a-f]{4})\)', line, re.IGNORECASE)
             if device_match:
                 if current_device:
                     devices.append(current_device)
@@ -350,12 +342,24 @@ class USBIPWrapper:
             logger.error(f"Failed to list attached devices: {stderr}")
             return devices
 
-        # Parse output
-        # Example:
-        # Port 00: <Port in Use> at High Speed(480Mbps)
-        #        Logitech, Inc. : Unifying Receiver (046d:c52b)
-        #        1-1 -> usbip://192.168.1.100:3240/1-1
-        #            -> remote bus/dev 001/002
+        # Parse output. Again the two implementations differ:
+        #
+        #   Linux usbip
+        #     Port 00: <Port in Use> at High Speed(480Mbps)
+        #            Logitech, Inc. : Unifying Receiver (046d:c52b)
+        #            1-1 -> usbip://192.168.1.100:3240/1-1
+        #                -> remote bus/dev 001/002
+        #
+        #   usbip-win2 (userspace/usbip/port.cpp)
+        #     Port 01: device in use at High Speed(480Mbps)
+        #              Logitech, Inc. : Unifying Receiver (046d:c52b)
+        #                -> usbip://192.168.1.100:3240/1-1
+        #                -> remote bus/dev: 001/002
+        #
+        # Windows prints no *local* busid before the arrow, so a pattern that
+        # required one matched nothing, leaving the attached-device table empty
+        # and detach unreachable from the UI -- the same failure this had on
+        # Linux for a different reason.
 
         current_port = None
         for line in stdout.split('\n'):
@@ -368,12 +372,16 @@ class USBIPWrapper:
             # Match remote connection line
             if current_port and '->' in line and 'usbip://' in line:
                 # Extract busid and host
-                remote_match = re.search(r'(\S+)\s+->\s+usbip://([^:]+):(\d+)/(\S+)', line)
+                remote_match = re.search(
+                    r'(?:(\S+)\s+)?->\s+usbip://([^:/]+):(\d+)/(\S+)', line
+                )
                 if remote_match:
-                    local_busid = remote_match.group(1)
                     remote_host = remote_match.group(2)
                     remote_port = remote_match.group(3)
                     remote_busid = remote_match.group(4)
+                    # Absent on Windows; fall back to the remote busid so the
+                    # column is never blank.
+                    local_busid = remote_match.group(1) or remote_busid
 
                     devices.append({
                         'port': current_port,
