@@ -4,3 +4,7 @@
 pytest>=7.4.0
 pytest-qt>=4.2.0
 ruff>=0.4.0
+
+# Parses the inline UI script in tests. QJSEngine cannot: it is ES7 and
+# rejects async/await, which the page uses.
+esprima>=4.0
