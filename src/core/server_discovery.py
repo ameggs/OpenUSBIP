@@ -1,7 +1,18 @@
 """
 Server discovery using mDNS/Avahi
 Optimized for discovering Raspberry Pi and SBC USB/IP servers on the network
+
+zeroconf is optional: without it, servers are added by address instead. That
+fallback only works because annotations are not evaluated at runtime -- see
+the __future__ import below.
 """
+
+# Required, not cosmetic. Without it, `-> Zeroconf | None` is evaluated when
+# the function is defined, and with zeroconf absent Zeroconf is None, so the
+# annotation raises `unsupported operand type(s) for |: NoneType and NoneType`
+# and the whole module fails to import. That turned a missing optional
+# dependency into a hard crash of anything that imports discovery.
+from __future__ import annotations
 
 import socket
 import threading
@@ -68,7 +79,7 @@ class USBIPServer:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'USBIPServer':
+    def from_dict(cls, data: dict) -> USBIPServer:
         """Create from dictionary"""
         return cls(
             name=data.get('name', 'Unknown'),

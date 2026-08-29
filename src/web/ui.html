@@ -1,0 +1,495 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenUSBIP</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9;      --panel: #fff;     --line: #dfe3e8;
+    --text: #1a1d21;    --muted: #6b7280;  --accent: #2563eb;
+    --ok: #15803d;      --warn: #b45309;   --bad: #b91c1c;
+    --hover: #f0f3f7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a;    --panel: #1c2024;  --line: #2c3238;
+      --text: #e7eaee;  --muted: #9aa3ad;  --accent: #5b90f6;
+      --ok: #4ade80;    --warn: #fbbf24;   --bad: #f87171;
+      --hover: #232830;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px; padding: 14px 20px;
+    background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  header .spacer { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .dot.off { background: var(--bad); }
+  main { max-width: 1000px; margin: 0 auto; padding: 20px; display: grid; gap: 16px; }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  section > h2 {
+    margin: 0; padding: 11px 16px; font-size: 12px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted);
+    border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px;
+  }
+  section > h2 .spacer { flex: 1; }
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 16px; border-bottom: 1px solid var(--line);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row.pick { cursor: pointer; }
+  .row.pick:hover { background: var(--hover); }
+  .row.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .grow { flex: 1; min-width: 0; }
+  .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .empty { padding: 18px 16px; color: var(--muted); }
+  button {
+    font: inherit; padding: 6px 12px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  }
+  button:hover:not(:disabled) { background: var(--hover); }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.danger { color: var(--bad); }
+  button.small { padding: 3px 9px; font-size: 12px; }
+  input[type=text] {
+    font: inherit; padding: 6px 10px; border-radius: 7px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--text);
+  }
+  input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label.check { display: flex; align-items: center; gap: 7px; cursor: pointer; user-select: none; }
+  .crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 9px 16px;
+            border-bottom: 1px solid var(--line); }
+  .crumbs button { padding: 2px 8px; font-size: 12px; }
+  .bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+  .banner { padding: 11px 16px; border-radius: 9px; border: 1px solid; }
+  .banner.bad  { color: var(--bad);  border-color: var(--bad);
+                 background: color-mix(in srgb, var(--bad) 10%, transparent); }
+  .banner.warn { color: var(--warn); border-color: var(--warn);
+                 background: color-mix(in srgb, var(--warn) 10%, transparent); }
+  .scroll { max-height: 380px; overflow-y: auto; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 20px; border: 1px solid var(--line); color: var(--muted); }
+  .footer { display: flex; gap: 10px; align-items: center; padding: 11px 16px; flex-wrap: wrap; }
+</style>
+
+<header>
+  <span class="dot" id="live"></span>
+  <h1>OpenUSBIP</h1>
+  <span class="sub" id="hostlabel"></span>
+  <span class="spacer"></span>
+  <button class="small" onclick="refresh(true)">Refresh</button>
+</header>
+
+<main>
+  <div id="alert" hidden></div>
+
+  <section>
+    <h2>Servers<span class="spacer"></span>
+      <input type="text" id="addhost" placeholder="192.168.0.146" size="15">
+      <button class="small" onclick="addServer()">Add by address</button>
+    </h2>
+    <div id="servers"><div class="empty">Looking for servers…</div></div>
+  </section>
+
+  <section id="devsec" hidden>
+    <h2>Devices on <span id="devfor"></span></h2>
+    <div id="devices"></div>
+  </section>
+
+  <section id="attsec" hidden>
+    <h2>Attached</h2>
+    <div id="attached"></div>
+  </section>
+
+  <section id="browsesec" hidden>
+    <h2>Files<span class="spacer"></span>
+      <button class="small" onclick="selectAll(true)">Select all</button>
+      <button class="small" onclick="selectAll(false)">Clear</button>
+    </h2>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="scroll" id="files"></div>
+    <div class="footer">
+      <span class="sub">Copy to</span>
+      <input type="text" id="dest" class="grow mono" placeholder="/mnt/pve/photos">
+      <label class="check"><input type="checkbox" id="skip" checked> Skip files already there</label>
+      <button class="primary" id="copybtn" onclick="startCopy()">Copy</button>
+    </div>
+  </section>
+
+  <section id="jobsec" hidden>
+    <h2>Transfers</h2>
+    <div id="jobs"></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+
+// The token arrives once in the URL, then lives in sessionStorage and is sent
+// as a header. Never a cookie: a cookie would be attached automatically to
+// cross-site requests, which is exactly the CSRF hole this avoids. Stripping
+// it from the address bar keeps it out of history and out of any link the
+// user copies out of the bar.
+(function () {
+  const url = new URL(location.href);
+  const supplied = url.searchParams.get("token");
+  if (supplied) {
+    sessionStorage.setItem("openusbip-token", supplied);
+    url.searchParams.delete("token");
+    history.replaceState({}, "", url.pathname + url.search);
+  }
+})();
+
+const TOKEN = sessionStorage.getItem("openusbip-token") || "";
+
+const S = {
+  servers: [], attachments: [], jobs: [],
+  server: null,        // selected server
+  devices: [],
+  attachment: null,    // selected attachment id
+  path: "",
+  entries: [],
+  picked: new Set(),
+  busy: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+function bytes(n) {
+  if (!n) return "0 B";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.min(u.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+  return (n / Math.pow(1024, i)).toFixed(i ? 1 : 0) + " " + u[i];
+}
+
+function say(message, kind) {
+  const box = $("alert");
+  if (!message) { box.hidden = true; return; }
+  box.hidden = false;
+  box.className = "banner " + (kind || "bad");
+  box.textContent = message;
+}
+
+async function api(path, options) {
+  const response = await fetch(path, Object.assign({
+    headers: {
+      "X-Auth-Token": TOKEN,
+      "Content-Type": "application/json",
+    },
+  }, options || {}));
+
+  let payload = {};
+  try { payload = await response.json(); } catch (e) { /* empty body */ }
+
+  if (response.status === 401) {
+    throw new Error("Not authorised. Reopen the link the server printed at startup.");
+  }
+  if (!response.ok) throw new Error(payload.error || ("HTTP " + response.status));
+  return payload;
+}
+
+const post = (path, body) => api(path, { method: "POST", body: JSON.stringify(body || {}) });
+
+async function guard(fn) {
+  // One place to serialise clicks and report failures. Attaching takes
+  // seconds, and a second click during it produces a confusing second attach.
+  if (S.busy) return;
+  S.busy = true;
+  render();
+  try { say(""); await fn(); }
+  catch (e) { say(e.message); }
+  finally { S.busy = false; await refresh(); }
+}
+
+// --- data ------------------------------------------------------------------
+
+async function refresh(loud) {
+  try {
+    const state = await api("/api/state");
+    S.servers = state.servers;
+    S.attachments = state.attachments;
+    S.jobs = state.jobs;
+    $("live").className = "dot on";
+    $("hostlabel").textContent = state.usbip_available ? "" : "usbip tools not found";
+
+    // A device that went away must not leave a stale file list on screen.
+    if (S.attachment && !S.attachments.some((a) => a.id === S.attachment)) {
+      S.attachment = null; S.entries = []; S.picked.clear();
+    }
+    if (loud) say("");
+  } catch (e) {
+    $("live").className = "dot off";
+    say(e.message);
+  }
+  render();
+}
+
+async function pickServer(server) {
+  S.server = server;
+  S.devices = [];
+  render();
+  await guard(async () => {
+    const data = await api("/api/devices?host=" + encodeURIComponent(server.ip_address) +
+                           "&port=" + server.port);
+    S.devices = data.devices;
+  });
+}
+
+const addServer = () => guard(async () => {
+  const host = $("addhost").value.trim();
+  if (!host) throw new Error("Enter an address first.");
+  await post("/api/servers", { host });
+  $("addhost").value = "";
+});
+
+const attach = (busid) => guard(async () => {
+  const result = await post("/api/attach", {
+    host: S.server.ip_address, port: S.server.port, busid,
+  });
+  const attachment = result.attachment;
+  if (attachment.browsable) await openAttachment(attachment.id, "");
+  if (attachment.note) say(attachment.note, "warn");
+});
+
+const detach = (id) => guard(() => post("/api/detach", { id }));
+
+async function openAttachment(id, path) {
+  S.attachment = id;
+  S.path = path || "";
+  S.picked.clear();
+  const data = await api("/api/browse?id=" + encodeURIComponent(id) +
+                         "&path=" + encodeURIComponent(S.path));
+  S.entries = data.entries;
+  render();
+}
+
+const browse = (id, path) => guard(() => openAttachment(id, path));
+
+function selectAll(on) {
+  S.picked.clear();
+  if (on) S.entries.forEach((e) => S.picked.add(e.path));
+  render();
+}
+
+function toggle(path) {
+  if (S.picked.has(path)) S.picked.delete(path); else S.picked.add(path);
+  render();
+}
+
+const startCopy = () => guard(async () => {
+  const destination = $("dest").value.trim();
+  if (!destination) throw new Error("Enter a destination folder on this machine.");
+  if (!S.picked.size) throw new Error("Nothing selected.");
+  await post("/api/copy", {
+    id: S.attachment,
+    sources: [...S.picked],
+    destination,
+    skip_existing: $("skip").checked,
+  });
+  S.picked.clear();
+  try { localStorage.setItem("openusbip-dest", destination); } catch (e) {}
+});
+
+const cancelJob = (job) => guard(() => post("/api/jobs/cancel", { job }));
+
+// --- rendering -------------------------------------------------------------
+
+function render() {
+  renderServers();
+  renderDevices();
+  renderAttached();
+  renderBrowser();
+  renderJobs();
+}
+
+const ICONS = { "raspberry-pi": "🥧", linux: "🐧", windows: "🪟", android: "📱", manual: "📍" };
+
+function renderServers() {
+  const box = $("servers");
+  if (!S.servers.length) {
+    box.innerHTML = '<div class="empty">No servers found yet. ' +
+      'If mDNS does not reach this machine, add one by address above.</div>';
+    return;
+  }
+  box.innerHTML = S.servers.map((server) => {
+    const selected = S.server && S.server.ip_address === server.ip_address;
+    return '<div class="row pick ' + (selected ? "sel" : "") + '" data-ip="' +
+      esc(server.ip_address) + '">' +
+      '<span class="dot ' + (server.is_online ? "on" : "off") + '"></span>' +
+      '<span>' + (ICONS[server.server_type] || "❓") + "</span>" +
+      '<span class="grow name">' + esc(server.name) + "</span>" +
+      '<span class="sub mono">' + esc(server.ip_address) + ":" + server.port + "</span>" +
+      '<span class="tag">' + esc(server.server_type) + "</span>" +
+      "</div>";
+  }).join("");
+
+  [...box.querySelectorAll(".row")].forEach((row) => {
+    row.onclick = () => pickServer(S.servers.find((s) => s.ip_address === row.dataset.ip));
+  });
+}
+
+function renderDevices() {
+  $("devsec").hidden = !S.server;
+  if (!S.server) return;
+  $("devfor").textContent = S.server.name;
+
+  const box = $("devices");
+  if (!S.devices.length) {
+    box.innerHTML = '<div class="empty">' +
+      (S.busy ? "Asking…" : "No devices shared by this server.") + "</div>";
+    return;
+  }
+  box.innerHTML = S.devices.map((device) =>
+    '<div class="row">' +
+      '<span class="grow name">' + esc(device.description) + "</span>" +
+      '<span class="sub mono">' + esc(device.busid) + "</span>" +
+      (device.attached
+        ? '<span class="tag">attached</span>'
+        : '<button class="small primary" data-busid="' + esc(device.busid) + '"' +
+          (S.busy ? " disabled" : "") + ">Attach</button>") +
+    "</div>").join("");
+
+  [...box.querySelectorAll("button[data-busid]")].forEach((button) => {
+    button.onclick = () => attach(button.dataset.busid);
+  });
+}
+
+function renderAttached() {
+  $("attsec").hidden = !S.attachments.length;
+  $("attached").innerHTML = S.attachments.map((a) => {
+    const where = a.mounted ? a.mountpoint : (a.note || "not mounted");
+    return '<div class="row ' + (S.attachment === a.id ? "sel" : "") + '">' +
+      "<span>" + (a.kind === "mtp" ? "📱" : a.kind === "storage" ? "💾" : "🔌") + "</span>" +
+      '<span class="grow"><div class="name">' + esc(a.description) + "</div>" +
+        '<div class="sub mono">' + esc(where) + "</div></span>" +
+      (a.read_only ? '<span class="tag">read-only</span>' : "") +
+      (a.browsable ? '<button class="small" data-browse="' + a.id + '">Browse</button>' : "") +
+      '<button class="small danger" data-detach="' + a.id + '"' +
+        (S.busy ? " disabled" : "") + ">Detach</button>" +
+    "</div>";
+  }).join("");
+
+  const box = $("attached");
+  [...box.querySelectorAll("button[data-browse]")].forEach((b) => {
+    b.onclick = () => browse(b.dataset.browse, "");
+  });
+  [...box.querySelectorAll("button[data-detach]")].forEach((b) => {
+    b.onclick = () => detach(b.dataset.detach);
+  });
+}
+
+function renderBrowser() {
+  const open = Boolean(S.attachment);
+  $("browsesec").hidden = !open;
+  if (!open) return;
+
+  const attachment = S.attachments.find((a) => a.id === S.attachment);
+  const parts = S.path ? S.path.split("/") : [];
+  let trail = "";
+  const crumbs = ['<button data-path="">' +
+    esc(attachment ? attachment.description : "device") + "</button>"];
+  parts.forEach((part) => {
+    trail = trail ? trail + "/" + part : part;
+    crumbs.push('<span class="sub">/</span><button data-path="' + esc(trail) + '">' +
+      esc(part) + "</button>");
+  });
+  $("crumbs").innerHTML = crumbs.join("");
+  [...$("crumbs").querySelectorAll("button")].forEach((b) => {
+    b.onclick = () => browse(S.attachment, b.dataset.path);
+  });
+
+  const box = $("files");
+  if (!S.entries.length) {
+    box.innerHTML = '<div class="empty">This folder is empty.</div>';
+  } else {
+    box.innerHTML = S.entries.map((entry) => {
+      const checked = S.picked.has(entry.path) ? " checked" : "";
+      return '<div class="row">' +
+        '<input type="checkbox" data-pick="' + esc(entry.path) + '"' + checked + ">" +
+        "<span>" + (entry.is_dir ? "📁" : "📄") + "</span>" +
+        (entry.is_dir
+          ? '<a class="grow name" href="#" data-open="' + esc(entry.path) + '">' +
+            esc(entry.name) + "</a>"
+          : '<span class="grow name">' + esc(entry.name) + "</span>") +
+        '<span class="sub">' + (entry.is_dir ? "" : bytes(entry.size)) + "</span>" +
+        "</div>";
+    }).join("");
+
+    [...box.querySelectorAll("[data-open]")].forEach((link) => {
+      link.onclick = (event) => { event.preventDefault(); browse(S.attachment, link.dataset.open); };
+    });
+    [...box.querySelectorAll("[data-pick]")].forEach((cb) => {
+      cb.onclick = () => toggle(cb.dataset.pick);
+    });
+  }
+
+  const count = S.picked.size;
+  const button = $("copybtn");
+  button.disabled = S.busy || !count;
+  button.textContent = count ? "Copy " + count + " item" + (count === 1 ? "" : "s") : "Copy";
+}
+
+function renderJobs() {
+  $("jobsec").hidden = !S.jobs.length;
+  $("jobs").innerHTML = S.jobs.slice().reverse().map((job) => {
+    const done = ["done", "failed", "cancelled"].includes(job.state);
+    const rate = job.rate ? bytes(job.rate) + "/s" : "";
+    const detail = job.state === "failed" ? job.error
+      : job.state === "done"
+        ? job.files_done + " files, " + bytes(job.bytes_done) +
+          (job.files_skipped ? " (" + job.files_skipped + " already there)" : "")
+        : (job.current || job.state) + " · " + job.files_done + "/" + job.files_total +
+          " · " + bytes(job.bytes_done) + " of " + bytes(job.bytes_total) +
+          (rate ? " · " + rate : "");
+    return '<div class="row"><span class="grow">' +
+      '<div class="name mono">' + esc(job.destination) + "</div>" +
+      '<div class="sub">' + esc(detail) + "</div>" +
+      (done ? "" : '<div class="bar" style="margin-top:6px"><i style="width:' +
+        job.percent + '%"></i></div>') +
+      "</span>" +
+      '<span class="tag">' + esc(job.state) + "</span>" +
+      (done ? "" : '<button class="small danger" data-cancel="' + job.id + '">Cancel</button>') +
+      "</div>";
+  }).join("");
+
+  [...$("jobs").querySelectorAll("button[data-cancel]")].forEach((b) => {
+    b.onclick = () => cancelJob(b.dataset.cancel);
+  });
+}
+
+// --- boot ------------------------------------------------------------------
+
+try {
+  const remembered = localStorage.getItem("openusbip-dest");
+  if (remembered) $("dest").value = remembered;
+} catch (e) { /* private window */ }
+
+$("addhost").addEventListener("keydown", (e) => { if (e.key === "Enter") addServer(); });
+
+if (!TOKEN) {
+  say("No access token. Open the link the server printed when it started.");
+} else {
+  refresh(true);
+  // Polling rather than websockets: it is a handful of bytes every two
+  // seconds on a LAN, and it reconnects by itself after the service restarts.
+  setInterval(() => { if (!S.busy) refresh(); }, 2000);
+}
+</script>

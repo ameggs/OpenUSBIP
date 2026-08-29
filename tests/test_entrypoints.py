@@ -155,3 +155,31 @@ def test_windows_preflight_continues_when_the_service_is_down(monkeypatch, capsy
     out = capsys.readouterr().out
     assert "Start-Service usbipd" in out
     assert "Advertising anyway" in out
+
+
+def test_discovery_imports_without_zeroconf(tmp_path):
+    """
+    Regression: the module crashed on import when zeroconf was absent.
+
+    It carefully sets `Zeroconf = None` on ImportError so servers can still be
+    added by address -- and then annotated a function `-> Zeroconf | None`,
+    which is evaluated at definition time and raises
+    "unsupported operand type(s) for |". So the fallback path could never
+    actually run, and every entry point died on a machine without the optional
+    dependency. Found running the hub under sudo, where the system interpreter
+    could not see a user-installed zeroconf.
+    """
+    script = tmp_path / "check.py"
+    script.write_text(
+        "import sys\n"
+        "sys.modules['zeroconf'] = None\n"
+        f"sys.path.insert(0, {REPO_ROOT!r})\n"
+        "import src.core.server_discovery as d\n"
+        "assert d.HAS_ZEROCONF is False\n"
+        "print('ok')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, timeout=60
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ok" in result.stdout
