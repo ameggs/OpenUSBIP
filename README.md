@@ -9,6 +9,7 @@ USB/IP protocol:
 | Piece | What it is | Runs on |
 |---|---|---|
 | **Desktop client** | Qt6 GUI: find servers, attach and detach devices | Linux, Windows |
+| **Hub** | Web UI client for machines with no desktop | Proxmox, Debian, any headless Linux |
 | **Server** | Shares locally-plugged USB devices | Linux, Raspberry Pi, Windows |
 | **Android app** | Shares the phone's *files* and its OTG devices | Android 7+ |
 
@@ -70,6 +71,29 @@ What it adds is mDNS advertisement, so an OpenUSBIP client discovers a Windows
 PC the same way it discovers a Pi. See
 [`packaging/windows/README.md`](packaging/windows/README.md).
 
+### Use devices from a headless server (Proxmox, a NAS, any Debian box)
+
+```bash
+git clone https://github.com/ameggs/OpenUSBIP.git
+cd OpenUSBIP
+sudo ./install-hub.sh
+```
+
+Then open the link it prints. The hub is a client with a web interface rather
+than a Qt window, because the machines that most want one — a hypervisor, a
+NAS — are administered through a browser and have no desktop to run a GUI on.
+
+Attach a device shared by another machine, and it is mounted and browsable:
+tick the files you want and give a destination on local storage. The typical
+use is pulling photos off a phone running the Android app straight onto the
+server's array.
+
+The installer only adds packages, `/opt/openusbip`, a systemd unit and
+`/etc/openusbip`. It touches no firewall, no network and no storage, restarts
+nothing already running, and **leaves the service disabled** so a reboot does
+not silently start a network service you have not decided to keep. Undo it all
+with `./install-hub.sh --uninstall`.
+
 ### Share from an Android phone
 
 See [`android/README.md`](android/README.md). Build with
@@ -92,6 +116,40 @@ Python and PySide6.
   a restart.
 - All blocking work runs on a thread pool, so an unreachable server never
   freezes the UI.
+
+### Hub (`openusbip_hub.py`, `src/web/`, `install-hub.sh`)
+
+A USB/IP client driven from a browser, for machines with no desktop.
+
+- **Attach, and it is ready to use.** `usbip attach` reports success without
+  saying what appeared, so the hub reads sysfs to work out whether you got a
+  mountable disk or an MTP phone and which `/dev/sd*` it is, waits for it to
+  settle, and mounts it.
+- **Browse and copy** with progress, resumable — a second run skips files
+  already at the destination, so pulling a phone's camera roll repeatedly is
+  cheap.
+- **Standard library only.** No pip. Debian marks its interpreter externally
+  managed and Unraid rebuilds its root filesystem from RAM on every boot, so a
+  dependency tree is a liability on exactly the machines this targets.
+  Everything comes from apt.
+
+It runs as root — attaching talks to the vhci driver and mounting talks to the
+kernel — often on a box with live guest storage, so the destructive directions
+are fenced structurally rather than by care:
+
+- unmount refuses any path outside `/run/openusbip`, judged on *resolved*
+  paths, so neither a symlink nor `..` nor a lookalike sibling directory gets
+  past it
+- browsing and copying resolve every path the client sends inside the mount and
+  reject anything that escapes
+- detach refuses while a copy to that device is running
+- mounts are `nosuid,nodev` — the contents arrive from another machine over an
+  unauthenticated protocol
+
+Access is a token generated on first run, sent as a request header and never as
+a cookie. That is the whole CSRF defence: a page on another origin cannot set a
+custom header without a preflight, so nothing else open in your browser can
+drive a service that attaches devices and writes files as root.
 
 ### Server (`openusbip_server.py`, `install-server.sh`)
 
@@ -121,7 +179,11 @@ they run as plain JVM tests. 184 tests, none needing a phone.
 
 ## Requirements
 
-- **Python** 3.10+ and **PySide6** for the desktop client (server is headless)
+- **Python** 3.10+ and **PySide6** for the desktop client (the server and the
+  hub are headless and need no Qt)
+- **For the hub**: `usbip`, plus `jmtpfs` to browse phones over MTP and
+  `python3-zeroconf` to find servers automatically. All from apt; the hub
+  itself uses only the standard library
 - **USB/IP tools**
   - Debian/Raspberry Pi OS: `sudo apt install usbip`
   - Ubuntu/Zorin: `sudo apt install linux-tools-common` (there is no `usbip`
@@ -156,8 +218,15 @@ that, so plan around it:
   device exposes your whole internal storage to anyone who can reach the phone
   on port 3240.
 
+- **The hub is a root-privileged web service.** It can attach USB devices and
+  write files anywhere on the machine. It is protected by a single generated
+  token, stored `0600` in `/etc/openusbip/hub.token`, and it binds every
+  interface by default so you can reach it from another machine. Bind it to
+  `127.0.0.1` and use an SSH tunnel if that is not what you want, and never
+  port-forward 8765.
+
 **Use it on a trusted LAN or across a VPN (WireGuard, Tailscale). Do not
-port-forward 3240.**
+port-forward 3240 or 8765.**
 
 ---
 
@@ -182,6 +251,15 @@ port-forward 3240.**
   rather than showing as busy, which matches `usbipd`.
 - **Tailscale needs an ACL change.** Tailnet policies are port allowlists and
   3240 is not on one by default, so remote access is refused until it is added.
+- **The hub's MTP path is not yet hardware-tested.** Attaching, mounting a
+  block device, browsing and copying are all verified on real hardware, and the
+  MTP code has unit tests, but the end-to-end "browse a phone over MTP from a
+  hypervisor" path has not been run against a phone yet. The block-device path
+  it shares is proven.
+- **Unraid is not supported yet.** Unraid builds its own kernel and it is not
+  confirmed to include `vhci_hcd`; without that module no USB/IP client can run
+  there at all, whatever the packaging. Check `modinfo vhci-hcd` on the box
+  before assuming otherwise.
 - **The Windows executables have not yet been built on Windows.** The specs and
   build script are written and were validated by building with the same specs
   on Linux — including a frozen binary that runs and advertises over mDNS — but
@@ -197,7 +275,7 @@ port-forward 3240.**
 ```bash
 # Python
 pip install -r requirements-dev.txt
-QT_QPA_PLATFORM=offscreen pytest        # 100 tests
+QT_QPA_PLATFORM=offscreen pytest        # 255 tests
 ruff check .
 
 # Android
@@ -241,7 +319,21 @@ a powered hub, or a better supply for a Raspberry Pi; `dmesg` on the server
 will show undervoltage events.
 
 **Unmount before detaching.** Detaching a mounted filesystem is how you corrupt
-it — exFAT in particular has no journal to recover from.
+it — exFAT in particular has no journal to recover from. The hub does this for
+you and refuses to detach while a copy is running.
+
+**Lost the hub's link** — `python3 /opt/openusbip/openusbip_hub.py --print-token`
+prints it again. The token does not change unless the file is deleted or found
+to be readable by others, in which case a new one is generated on purpose.
+
+**The hub says a device attached but reported no media** — that is a card
+reader or drive bay with nothing in it. The device is genuinely attached and
+visible as a `/dev/sd*` node; there is just no medium behind it.
+
+**The hub finds no servers** — mDNS may not cross your network segment, which
+is common between VLANs and over a VPN. Add the server by address; nothing else
+depends on discovery. On a machine without `python3-zeroconf` the hub logs a
+warning at startup and carries on with manual servers only.
 
 ---
 
