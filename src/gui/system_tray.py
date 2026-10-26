@@ -60,6 +60,10 @@ class SystemTray(QObject):
         # Storage for dynamic menu items
         self.servers: list[USBIPServer] = []
         self.devices: dict = {}  # server_ip -> [devices]
+        # What each menu was last built from, so periodic refreshes only
+        # rebuild it when something actually changed.
+        self._servers_key = None
+        self._attached_key = None
 
         logger.info("System tray initialized")
 
@@ -120,6 +124,14 @@ class SystemTray(QObject):
     def update_servers(self, servers: list[USBIPServer]):
         """Update the servers menu"""
         self.servers = servers
+        key = tuple(
+            (srv.name, srv.ip_address, srv.port,
+             tuple((d.busid, d.description) for d in self.devices.get(srv.ip_address) or ()))
+            for srv in servers
+        )
+        if key == self._servers_key:
+            return
+        self._servers_key = key
         self.servers_menu.clear()
 
         if not servers:
@@ -162,6 +174,12 @@ class SystemTray(QObject):
 
     def update_attached_devices(self, attached_devices: list[dict]):
         """Update the attached devices menu"""
+        key = tuple(
+            (d.get('port'), d.get('busid'), d.get('remote_host')) for d in attached_devices
+        )
+        if key == self._attached_key:
+            return
+        self._attached_key = key
         self.attached_menu.clear()
 
         if not attached_devices:

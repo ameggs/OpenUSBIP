@@ -256,9 +256,9 @@ class ServerListWidget(QWidget):
             self,
             "Add Server",
             "Enter port number:",
-            value=3240,
-            min=1,
-            max=65535
+            3240,  # value; PySide6 takes these positionally, not as min=/max=
+            1,
+            65535
         )
 
         if not ok:

@@ -12,7 +12,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QApplication,
@@ -43,6 +43,11 @@ logger = setup_logger(__name__)
 class MainWindow(QMainWindow):
     """Main application window"""
 
+    # Zeroconf reports servers from its own thread. Emitting this signal
+    # queues the update onto the GUI thread; touching widgets directly from
+    # the zeroconf thread is undefined in Qt and froze the client.
+    server_discovered = Signal(object)
+
     def __init__(self, mode: str = "client", enable_tray: bool = True):
         super().__init__()
 
@@ -58,6 +63,7 @@ class MainWindow(QMainWindow):
         self.config = ConfigManager()
         self.usbip = USBIPWrapper()
         self.discovery = ServerDiscovery()
+        self.server_discovered.connect(self.on_server_discovered)
 
         # Re-add servers the user saved in a previous session. Without this
         # every manually added server was lost on exit.
@@ -90,7 +96,7 @@ class MainWindow(QMainWindow):
         # Setup refresh timer
         self.refresh_timer = QTimer()
         self.refresh_timer.timeout.connect(self.refresh_data)
-        self.refresh_timer.start(5000)  # Refresh every 5 seconds
+        self.refresh_timer.start(15000)  # Refresh every 15 seconds
 
         # Show tray icon
         if self.tray:
@@ -271,7 +277,7 @@ class MainWindow(QMainWindow):
 
     def start_discovery(self):
         """Start server discovery"""
-        if self.discovery.start(self.on_server_discovered):
+        if self.discovery.start(self.server_discovered.emit):
             logger.info("Server discovery started")
             self.update_status("Discovering servers...")
         else:
