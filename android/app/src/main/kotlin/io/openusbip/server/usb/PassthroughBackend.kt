@@ -7,6 +7,7 @@ import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.hardware.usb.UsbManager
 import android.util.Log
+import io.openusbip.server.BuildConfig
 import io.openusbip.server.net.UrbResult
 import io.openusbip.server.net.UsbBackend
 import io.openusbip.server.protocol.CmdSubmit
@@ -319,7 +320,7 @@ class PassthroughBackend(
 
     companion object {
         private const val TAG = "UsbipPassthru"
-        private const val DEBUG = true
+        private val DEBUG = BuildConfig.DEBUG
 
         /**
          * Long enough for a slow device to answer, short enough that a wedged

@@ -1,5 +1,6 @@
 package io.openusbip.server.storage
 
+import io.openusbip.server.BuildConfig
 import io.openusbip.server.net.UrbResult
 import io.openusbip.server.net.UsbBackend
 import io.openusbip.server.protocol.CmdSubmit
@@ -182,7 +183,7 @@ class MassStorageBackend(
 
     companion object {
         private const val TAG = "UsbipMsc"
-        private const val DEBUG = true
+        private val DEBUG = BuildConfig.DEBUG
 
         /** Virtual devices live on their own bus so they cannot collide with
          *  a real one passed through from the OTG port. */

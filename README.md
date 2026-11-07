@@ -256,10 +256,10 @@ port-forward 3240 or 8765.**
   MTP code has unit tests, but the end-to-end "browse a phone over MTP from a
   hypervisor" path has not been run against a phone yet. The block-device path
   it shares is proven.
-- **Unraid is not supported yet.** Unraid builds its own kernel and it is not
-  confirmed to include `vhci_hcd`; without that module no USB/IP client can run
-  there at all, whatever the packaging. Check `modinfo vhci-hcd` on the box
-  before assuming otherwise.
+- **Unraid is not yet packaged or tested.** On Unraid 6.12.98-Unraid the
+  kernel ships `vhci_hcd` and `usbip_host` (both loaded), and `/usr/sbin/usbip`
+  and `/usr/sbin/usbipd` exist, so a USB/IP client can run there. OpenUSBIP
+  itself has not been packaged or tested on Unraid.
 - **The Windows executables have not yet been built on Windows.** The specs and
   build script are written and were validated by building with the same specs
   on Linux — including a frozen binary that runs and advertises over mDNS — but

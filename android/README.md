@@ -82,6 +82,11 @@ Working: protocol codec, TCP server and URB pump, device registry with
 one-client-per-device exclusivity, SCSI target, Bulk-Only Transport,
 synthesised mass-storage device, foreground service, control-panel UI.
 
+### Implemented but not complete
+
+- **MTP over USB/IP** is implemented and was exercised against the phone.
+- **OTG passthrough** is implemented but experimental and parked.
+
 ### Not written yet
 
 - **Per-device share toggles.** The virtual disk and MTP device are offered
@@ -92,11 +97,10 @@ synthesised mass-storage device, foreground service, control-panel UI.
 
 ### Notes for picking this up
 
-- `MassStorageBackend.DEBUG` is `true`, logging every URB with endpoint,
-  direction, length, setup packet and result. That trace is what located the
-  `actual_length` bug, so it stays for now -- but turn it off before real use;
-  it is noisy and logs transfer metadata.
-  Watch it with `adb logcat -s UsbipMsc:V`.
+- Debug URB logging (endpoint, direction, length, setup packet and result) is
+  gated on `BuildConfig.DEBUG`, so it is compiled out of release builds. That
+  trace is what located the `actual_length` bug. Watch it in a debug build
+  with `adb logcat -s UsbipMsc:V`.
 - `MainActivity` honours `--ez autostart true` / `--ez autostop true` so the
   export can be driven from adb without unlocking the phone. Gated on
   `BuildConfig.DEBUG` on purpose: the activity is exported, so in a release
