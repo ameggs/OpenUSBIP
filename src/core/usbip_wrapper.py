@@ -92,9 +92,6 @@ class USBIPWrapper:
         List USB devices on local machine (server mode)
         """
         if self.platform == Platform.WINDOWS:
-            if not self._usbipd_cmd:
-                logger.error("usbipd command not found")
-                return []
             return self._list_local_devices_windows()
 
         # Linux lists local devices with `usbip list -l`; usbipd is the daemon
@@ -106,47 +103,14 @@ class USBIPWrapper:
 
     def _list_local_devices_windows(self) -> list[USBDevice]:
         """
-        List local devices on Windows using usbipd-win.
+        Windows is client-only, so there is nothing to export from this machine.
 
-        Prefers `usbipd state`, whose JSON usbipd-win maintains as a
-        machine-readable interface. `usbipd list` is only a fallback for
-        installations predating that command: its table truncates the device
-        name to 60 columns and pads it with the same spaces that separate the
-        columns, so it cannot be parsed as reliably.
+        Sharing devices FROM Windows is usbipd-win's job and is not part of
+        this project. Enumerating local devices here would imply an export
+        capability the Windows client does not have.
         """
-        from src.utils import windows_support
-
-        returncode, stdout, stderr = run_command([self._usbipd_cmd, "state"])  # type: ignore
-        parsed: list[dict[str, str]] = []
-
-        if returncode == 0:
-            parsed = windows_support.parse_state_json(stdout)
-            if not parsed and stdout.strip():
-                logger.warning("usbipd state returned output that did not parse")
-        else:
-            logger.info(f"usbipd state unavailable ({stderr.strip()}); trying list")
-            returncode, stdout, stderr = run_command([self._usbipd_cmd, "list"])  # type: ignore
-            if returncode != 0:
-                logger.error(f"Failed to list devices: {stderr}")
-                return []
-            parsed = windows_support.parse_list_output(stdout)
-
-        state_map = {
-            windows_support.STATE_ATTACHED: DeviceState.ATTACHED,
-            windows_support.STATE_SHARED: DeviceState.AVAILABLE,
-            windows_support.STATE_NOT_SHARED: DeviceState.BUSY,
-        }
-
-        return [
-            USBDevice(
-                busid=d["busid"],
-                vendor_id=d["vendor_id"],
-                product_id=d["product_id"],
-                description=d["description"],
-                state=state_map.get(d["state"], DeviceState.BUSY),
-            )
-            for d in parsed
-        ]
+        logger.info("Windows is client-only; nothing local to export")
+        return []
 
     def _list_local_devices_linux(self) -> list[USBDevice]:
         """List local devices on Linux using usbip"""

@@ -63,9 +63,9 @@ jobs:
         continue-on-error: true
 
   windows:
-    # The Windows support is the part hardest to verify by hand -- tool
-    # discovery, the packaged build, and PowerShell syntax all only fail on
-    # Windows. A runner exercises them on every push instead.
+    # Windows is client-only. Its support is the part hardest to verify by
+    # hand -- tool discovery, the packaged client build, and PowerShell syntax
+    # all only fail on Windows. A runner exercises them on every push instead.
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,22 +107,26 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: pytest
 
-      - name: Build the executables
+      - name: Build the executable
+        # Windows is client-only: there is no Windows server executable.
         shell: pwsh
         run: |
           pip install "pyinstaller>=6.3"
           pyinstaller --noconfirm packaging/windows/openusbip-client.spec
-          pyinstaller --noconfirm packaging/windows/openusbip-server.spec
 
-      - name: Check the executables start
+      - name: Check the executable starts
         shell: pwsh
-        # --help exits before any GUI or USB/IP work, so this runs unattended
-        # while still proving the frozen imports resolve. A missing hidden
-        # import shows up here and nowhere earlier.
+        # The client is a windowed GUI app with no --help, so launch it and
+        # check it is still running after a few seconds. A missing hidden
+        # import kills it at startup and shows up here and nowhere earlier.
         run: |
-          .\dist\OpenUSBIPServer\OpenUSBIPServer.exe --help
-          if ($LASTEXITCODE -ne 0) { throw "server exe failed to start" }
-          Write-Host "server exe starts"
+          $proc = Start-Process -FilePath .\dist\OpenUSBIP\OpenUSBIP.exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($proc.HasExited) {
+            throw "client exe exited at startup (code $($proc.ExitCode))"
+          }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host "client exe starts"
 
       - uses: actions/upload-artifact@v4
         with:

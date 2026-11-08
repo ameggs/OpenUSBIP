@@ -4,6 +4,17 @@ All notable changes to OpenUSBIP will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **The Windows server executable (`OpenUSBIPServer.exe`) and its installer
+  (`install-server.ps1`).** Windows is now client-only. usbipd-win already is a
+  Windows USB/IP server, with a signed service; our wrapper only added mDNS
+  advertisement on top of it. USB/IP needs the driver on the attaching machine
+  regardless, so the wrapper saved users nothing. Sharing devices FROM Windows
+  is done with usbipd-win directly. `openusbip_server.py` now exits on Windows
+  with a pointer to usbipd-win and the client, and `windows_support`
+  no longer parses `usbipd state` (device listing uses `usbipd list`).
+
 ### Fixed
 
 - **Server entry point crashed on every run.** `openusbip_server.py` put `src/`

@@ -46,10 +46,7 @@ sudo usbipd -D
 
 **Windows Client:**
 ```powershell
-# Install usbipd-win (for server mode)
-winget install usbipd
-
-# Install usbip-win2 (for client mode)
+# Install usbip-win2 (the client driver; Windows is client-only)
 # Download from: https://github.com/vadimgrn/usbip-win2/releases
 ```
 

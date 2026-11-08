@@ -113,50 +113,6 @@ def test_server_type_detection(platform_value, hostname, expected):
     assert _detect_server_type(platform_value, hostname) == expected
 
 
-def test_windows_preflight_exits_when_usbipd_is_absent(monkeypatch, capsys):
-    """
-    Without usbipd-win there is nothing to advertise, so advertising anyway
-    would publish a server that refuses every connection.
-    """
-    import logging
-
-    import openusbip_server
-
-    monkeypatch.setattr(
-        "src.utils.platform_utils.find_command", lambda name: None
-    )
-
-    with pytest.raises(SystemExit):
-        openusbip_server._preflight_windows(3240, logging.getLogger("test"))
-
-    assert "usbipd-win" in capsys.readouterr().out
-
-
-def test_windows_preflight_continues_when_the_service_is_down(monkeypatch, capsys):
-    """
-    An installed-but-stopped service is worth advertising through: the client
-    will find the machine as soon as the service comes up, and the message
-    tells the user exactly which command to run.
-    """
-    import logging
-
-    import openusbip_server
-
-    monkeypatch.setattr(
-        "src.utils.platform_utils.find_command",
-        lambda name: r"C:\Program Files\usbipd-win\usbipd.exe",
-    )
-    monkeypatch.setattr(
-        "src.utils.platform_utils.port_is_listening", lambda *a, **k: False
-    )
-
-    openusbip_server._preflight_windows(3240, logging.getLogger("test"))
-
-    out = capsys.readouterr().out
-    assert "Start-Service usbipd" in out
-    assert "Advertising anyway" in out
-
-
 def test_discovery_imports_without_zeroconf(tmp_path):
     """
     Regression: the module crashed on import when zeroconf was absent.

@@ -1,17 +1,16 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Builds the OpenUSBIP Windows executables with PyInstaller.
+    Builds the OpenUSBIP Windows client with PyInstaller.
 
 .DESCRIPTION
-    Produces two one-folder builds under dist\:
+    Windows is client-only. Produces one one-folder build under dist\:
 
         dist\OpenUSBIP\OpenUSBIP.exe              the GUI client
-        dist\OpenUSBIPServer\OpenUSBIPServer.exe  the mDNS-advertising server
 
-    Neither executable contains a USB/IP driver. The client drives usbip-win2
-    and the server drives usbipd-win; both are separate installs, because the
-    kernel-mode parts have to be signed and this project ships no driver.
+    The executable contains no USB/IP driver. The client drives usbip-win2,
+    which is a separate install, because the kernel-mode parts have to be
+    signed and this project ships no driver.
 
     Run from anywhere; the script locates the repository itself.
 
@@ -19,20 +18,12 @@
     Delete build\ and dist\ first. Worth using after changing a .spec file:
     PyInstaller caches analysis results and will otherwise reuse stale ones.
 
-.PARAMETER ClientOnly
-    Build only the GUI client.
-
-.PARAMETER ServerOnly
-    Build only the server.
-
 .EXAMPLE
     .\packaging\windows\build.ps1 -Clean
 #>
 [CmdletBinding()]
 param(
-    [switch]$Clean,
-    [switch]$ClientOnly,
-    [switch]$ServerOnly
+    [switch]$Clean
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,11 +100,7 @@ try {
         Write-Ok 'build\ and dist\ removed'
     }
 
-    $targets = @()
-    if (-not $ServerOnly) { $targets += 'openusbip-client.spec' }
-    if (-not $ClientOnly) { $targets += 'openusbip-server.spec' }
-
-    foreach ($spec in $targets) {
+    foreach ($spec in @('openusbip-client.spec')) {
         Write-Step "Building $spec"
         & $VenvPy -m PyInstaller --noconfirm (Join-Path $ScriptDir $spec)
         if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed on $spec" }
@@ -124,8 +111,7 @@ try {
     Write-Step 'Result'
     $built = @()
     foreach ($pair in @(
-        @{ Name = 'Client'; Path = 'dist\OpenUSBIP\OpenUSBIP.exe' },
-        @{ Name = 'Server'; Path = 'dist\OpenUSBIPServer\OpenUSBIPServer.exe' }
+        @{ Name = 'Client'; Path = 'dist\OpenUSBIP\OpenUSBIP.exe' }
     )) {
         if (Test-Path $pair.Path) {
             $folder = Split-Path -Parent $pair.Path
@@ -137,11 +123,10 @@ try {
     if (-not $built) { throw 'PyInstaller reported success but produced no executable.' }
 
     Write-Host ''
-    Write-Warn2 'These executables contain no USB/IP driver. Before use, install:'
+    Write-Warn2 'This executable contains no USB/IP driver. Before use, install:'
     Write-Warn2 '  client -> usbip-win2   https://github.com/vadimgrn/usbip-win2/releases'
-    Write-Warn2 '  server -> usbipd-win   https://github.com/dorssel/usbipd-win/releases'
     Write-Host ''
-    Write-Warn2 'They are also unsigned, so SmartScreen will warn on first run.'
+    Write-Warn2 'It is also unsigned, so SmartScreen will warn on first run.'
 }
 finally {
     Pop-Location

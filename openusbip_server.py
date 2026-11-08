@@ -50,42 +50,6 @@ def _detect_server_type(platform_value: str, hostname: str) -> str:
     return platform_value
 
 
-def _preflight_windows(port, logger):
-    """
-    Report whether usbipd-win is installed and actually serving.
-
-    Nothing is started or installed here: usbipd-win runs as a Windows service
-    under its own installer, and silently shelling out to `sc start` would be
-    both surprising and likely to fail without elevation. The useful thing this
-    can do is say precisely what is wrong.
-    """
-    from src.utils import windows_support
-    from src.utils.platform_utils import find_command, port_is_listening
-
-    usbipd = find_command("usbipd")
-    if not usbipd:
-        print(f"\nERROR: {windows_support.missing_server_message()}")
-        sys.exit(1)
-
-    logger.info(f"Found usbipd at {usbipd}")
-    print(f"✅ usbipd-win found: {usbipd}")
-
-    if port_is_listening(port):
-        print(f"✅ usbipd service is accepting connections on port {port}")
-        return
-
-    # The service being installed but not listening is the common case after a
-    # fresh install, and it is invisible until a client fails to connect.
-    print(f"❌ Nothing is listening on port {port}")
-    print("\n   The usbipd-win service is installed but not running. Start it with")
-    print("   an elevated PowerShell:")
-    print("\n       Start-Service usbipd")
-    print("\n   Devices also have to be shared explicitly before clients see them:")
-    print("\n       usbipd list")
-    print("       usbipd bind --busid <BUSID>")
-    print("\n   Advertising anyway, so clients can find this machine once it is up.")
-
-
 def main(argv=None):
     """Main entry point"""
     args = parse_args(argv)
@@ -112,11 +76,14 @@ def main(argv=None):
     logger.info(f"Running on: {platform.value}")
 
     if platform.value == "windows":
-        # Windows already has a perfectly good USB/IP daemon in usbipd-win, so
-        # this does not reimplement one. What it adds is the part usbipd-win
-        # has no interest in: announcing the machine over mDNS so OpenUSBIP
-        # clients discover it the same way they discover a Pi.
-        _preflight_windows(args.port, logger)
+        print(
+            "\nThis entry point is the OpenUSBIP Linux/Raspberry Pi server. "
+            "Sharing devices FROM Windows is usbipd-win's job, and OpenUSBIP "
+            "does not ship a Windows server. On Windows, run the OpenUSBIP "
+            "client (openusbip_client.py) to attach devices shared by other "
+            "machines."
+        )
+        sys.exit(1)
     else:
         installed, msg = check_usbip_installed()
         if not installed:

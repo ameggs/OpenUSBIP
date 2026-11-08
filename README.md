@@ -10,7 +10,7 @@ USB/IP protocol:
 |---|---|---|
 | **Desktop client** | Qt6 GUI: find servers, attach and detach devices | Linux, Windows |
 | **Hub** | Web UI client for machines with no desktop | Proxmox, Debian, any headless Linux |
-| **Server** | Shares locally-plugged USB devices | Linux, Raspberry Pi, Windows |
+| **Server** | Shares locally-plugged USB devices | Linux, Raspberry Pi |
 | **Android app** | Shares the phone's *files* and its OTG devices | Android 7+ |
 
 Any of them interoperates with stock `usbip` from the Linux kernel tools, so a
@@ -58,17 +58,13 @@ prompting.
 .\packaging\windows\build.ps1 -Clean
 ```
 
-Produces `dist\OpenUSBIP\OpenUSBIP.exe` (the GUI client) and
-`dist\OpenUSBIPServer\OpenUSBIPServer.exe`. Neither contains a USB/IP driver
-— that has to be signed, and this project ships none — so install the driver
-side separately:
+Produces `dist\OpenUSBIP\OpenUSBIP.exe` (the GUI client). It contains no
+USB/IP driver — that has to be signed, and this project ships none — so
+install [usbip-win2](https://github.com/vadimgrn/usbip-win2/releases) as well.
 
-- Client: [usbip-win2](https://github.com/vadimgrn/usbip-win2/releases)
-- Server: [usbipd-win](https://github.com/dorssel/usbipd-win/releases)
-
-The Windows server does not reimplement a daemon; usbipd-win already is one.
-What it adds is mDNS advertisement, so an OpenUSBIP client discovers a Windows
-PC the same way it discovers a Pi. See
+Sharing devices FROM a Windows machine is done with
+[usbipd-win](https://github.com/dorssel/usbipd-win/releases) directly, which is
+not part of this project; OpenUSBIP does not ship a Windows server. See
 [`packaging/windows/README.md`](packaging/windows/README.md).
 
 ### Use devices from a headless server (Proxmox, a NAS, any Debian box)
@@ -190,8 +186,11 @@ they run as plain JVM tests. 184 tests, none needing a phone.
     package there; the binary ships with linux-tools)
   - Windows client: [usbip-win2](https://github.com/vadimgrn/usbip-win2)
     (ships the vhci driver Windows needs to attach anything)
-  - Windows server: [usbipd-win](https://github.com/dorssel/usbipd-win)
-  - Neither adds itself to `PATH`; OpenUSBIP searches Program Files for them
+  - usbip-win2 does not add itself to `PATH`; OpenUSBIP searches Program Files
+    for it
+  - Windows is client-only; sharing from Windows is
+    [usbipd-win](https://github.com/dorssel/usbipd-win)'s job, not this
+    project's
 - **Android**: 7.0+, USB host mode for passthrough, JDK 17 and SDK 34 to build
 
 ---
@@ -260,9 +259,9 @@ port-forward 3240 or 8765.**
   kernel ships `vhci_hcd` and `usbip_host` (both loaded), and `/usr/sbin/usbip`
   and `/usr/sbin/usbipd` exist, so a USB/IP client can run there. OpenUSBIP
   itself has not been packaged or tested on Unraid.
-- **The Windows executables have not yet been built on Windows.** The specs and
-  build script are written and were validated by building with the same specs
-  on Linux — including a frozen binary that runs and advertises over mDNS — but
+- **The Windows executable has not yet been built on Windows.** The spec and
+  build script are written and were validated by building with the same spec
+  on Linux, but
   the Windows-only parts (icon and version resources, the UAC manifest, the
   Program Files search against a real usbip-win2 install) are so far covered
   only by unit tests and the `windows` CI job. Treat them as untested on
